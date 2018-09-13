@@ -9,6 +9,8 @@ w = Window(Blink.@d(:async=>false))
 # Set up to allow loading modules
 js(w, Blink.JSString("""
     window.nodeRequire = require;
+    window.nodeExports = window.exports;
+    window.nodeModule = window.module;
     delete window.require;
     delete window.exports;
     delete window.module;
@@ -183,3 +185,144 @@ function testfunction(firstline, node, f, lastline, test_context)
         end
     end
 end
+
+
+
+# --- FILE API ---
+# Set up dialog
+js(w, Blink.JSString(""" dialog = nodeRequire('electron').remote.dialog; """))
+function open_dialog(selectedfiles)
+    println(selectedfiles)
+    if selectedfiles == nothing || isempty(selectedfiles) || selectedfiles[1] == ""
+        return
+    end
+    contents = read(selectedfiles[1], String)
+    println(contents)
+    @js_ w texteditor.setValue($contents)
+end
+
+save_dialog(args::Array) = save_dialog(args...)
+function save_dialog(selectedfile, contents)
+    println(selectedfile)
+    if selectedfile == nothing || selectedfile == ""
+        return
+    end
+    write(selectedfile, contents)
+    println(contents)
+end
+
+
+# Create menus
+
+js(w, Blink.JSString("""
+    const {app, Menu} = nodeRequire('electron').remote
+
+    function clickOpen(menuItem, browserWindow, event) {
+        selectedfiles = dialog.showOpenDialog({properties: ['openFile']});
+        console.log(selectedfiles)
+        Blink.msg("open", selectedfiles);
+    }
+    function clickSave(menuItem, browserWindow, event) {
+        selectedfile = dialog.showSaveDialog({});
+        console.log(selectedfile)
+        Blink.msg("save", [selectedfile, texteditor.getValue()]);
+    }
+
+      const template = [
+        {
+          label: 'File',
+          submenu: [
+            {label: 'Open', click: clickOpen, accelerator:'CommandOrControl+O'},
+            {type: 'separator'},
+            {label: 'Save', click: clickSave, accelerator:'CommandOrControl+S' },
+          ]
+        },
+        {
+          label: 'Edit',
+          submenu: [
+            {role: 'undo'},
+            {role: 'redo'},
+            {type: 'separator'},
+            {role: 'cut'},
+            {role: 'copy'},
+            {role: 'paste'},
+            {role: 'pasteandmatchstyle'},
+            {role: 'delete'},
+            {role: 'selectall'}
+          ]
+        },
+        {
+          label: 'View',
+          submenu: [
+            {role: 'reload'},
+            {role: 'forcereload'},
+            {role: 'toggledevtools'},
+            {type: 'separator'},
+            {role: 'resetzoom'},
+            {role: 'zoomin'},
+            {role: 'zoomout'},
+            {type: 'separator'},
+            {role: 'togglefullscreen'}
+          ]
+        },
+        {
+          role: 'window',
+          submenu: [
+            {role: 'minimize'},
+            {role: 'close'}
+          ]
+        },
+        {
+          role: 'help',
+          submenu: [
+            {
+              label: 'Learn More',
+              click () { require('electron').shell.openExternal('https://electronjs.org') }
+            }
+          ]
+        }
+      ]
+
+      if (process.platform === 'darwin') {
+        template.unshift({
+          label: app.getName(),
+          submenu: [
+            {role: 'about'},
+            {type: 'separator'},
+            {role: 'services', submenu: []},
+            {type: 'separator'},
+            {role: 'hide'},
+            {role: 'hideothers'},
+            {role: 'unhide'},
+            {type: 'separator'},
+            {role: 'quit'}
+          ]
+        })
+
+        // Edit menu
+        template[2].submenu.push(
+          {type: 'separator'},
+          {
+            label: 'Speech',
+            submenu: [
+              {role: 'startspeaking'},
+              {role: 'stopspeaking'}
+            ]
+          }
+        )
+
+        // Window menu
+        template[4].submenu = [
+          {role: 'close'},
+          {role: 'minimize'},
+          {role: 'zoom'},
+          {type: 'separator'},
+          {role: 'front'}
+        ]
+      }
+
+      const menu = Menu.buildFromTemplate(template)
+      Menu.setApplicationMenu(menu)
+  """))
+Blink.handlers(w)["save"] = save_dialog
+Blink.handlers(w)["open"] = open_dialog
