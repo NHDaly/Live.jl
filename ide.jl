@@ -49,6 +49,7 @@ html() = """
     td, th {
         border: 1px solid gray;
         padding: 3px;
+        width: 50%;
     }
   </style>
  """
