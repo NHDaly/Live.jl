@@ -76,6 +76,39 @@ module UserCode end
 
 numlines(str) = 1+count(c->c=='\n', str)
 
+function setOutputText(line, text)
+    global outputText
+    outputLines = split(outputText, '\n')
+    #println("before: $outputLines")
+    textLines = split(text, '\n')
+    while length(outputLines) <= line + length(textLines)
+        push!(outputLines, "")
+    end
+    start, finish = line, line+numlines(text)-1
+    outputLines[start:finish] = textLines
+    # Must use @js_ since no return value required. (@js hangs)
+    #@js_ w outputarea.replaceRange($text, CodeMirror.Pos($start, 0), CodeMirror.Pos($finish, 0))
+    #println("after: $outputLines")
+    outputText = join(outputLines, "\n")
+    @js_ w outputarea.setValue($outputText)
+end
+
+
+# Handle more interactivity for users
+module Live
+  struct TestLine
+      args
+      lineNode::LineNumberNode
+  end
+
+  macro test(args...)
+      TestLine(args, __source__)
+  end
+end
+
+testline_requested(_) = false
+testline_requested(_::Live.TestLine) = true
+
 text = ""
 function editorchange(editortext)
     try  # So errors don't crash my Blink window...
@@ -84,10 +117,29 @@ function editorchange(editortext)
         parsed = parseall(editortext)
         lastline = 1
         setOutputText(1, '\n'^numlines(text))
+        test_next_function = false
+        nextfunction = nothing
+        run_at_next_linenode = false
         for node in parsed.args
-            isa(node, LineNumberNode) && (lastline = node.line)
+            if isa(node, LineNumberNode)
+                lastline = node.line
+                if run_at_next_linenode
+                    testfunction(nextfunction..., lastline)
+                    run_at_next_linenode = false
+                end
+            end
             try
-                Core.eval(UserCode, node)
+                out = Core.eval(UserCode, node)
+                if test_next_function && isa(out, Function)
+                    nextfunction = (lastline, node, out)
+                    test_next_function = false
+                    run_at_next_linenode = true
+                end
+                if testline_requested(out)
+                    test_next_function =  true
+                elseif out != nothing
+                    setOutputText(lastline, repr(out))
+                end
             catch e
                 setOutputText(lastline, string(e))
             end
@@ -97,20 +149,23 @@ function editorchange(editortext)
     end
     nothing
 end
-
-function setOutputText(line, text)
-    global outputText
-    outputLines = split(outputText, '\n')
-    textLines = split(text, '\n')
-    while length(outputLines) <= line + length(textLines)
-        push!(outputLines, "")
-    end
-    start, finish = line, line+numlines(text)-1
-    outputLines[start:finish] = textLines
-    # Must use @js_ since no return value required. (@js hangs)
-    #@js_ w outputarea.replaceRange($text, CodeMirror.Pos($start, 0), CodeMirror.Pos($finish, 0))
-    outputText = join(outputLines, "\n")
-    @js_ w outputarea.setValue($outputText)
-end
-
 Blink.handlers(w)["editorchange"] = editorchange
+
+module FunctionModule end
+function testfunction(firstline, node, f, lastline)
+    #println("$firstline, $node, $f, $lastline")
+    global fnode = node
+    global body = fnode.args[2]
+    lastline = 1
+    for node in body.args
+        if isa(node, LineNumberNode)
+            lastline = node.line
+        end
+        try
+            out = Core.eval(FunctionModule, node)
+            setOutputText(firstline + lastline-1, repr(out))
+        catch e
+            println("testfunction ERROR: $e")
+        end
+    end
+end

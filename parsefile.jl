@@ -5,7 +5,7 @@ function parseall(str)
     exprs = []
     parsed = nothing
     while !done(str, pos)
-            linenum = length(str)
+            linenum = 1+count(c->c=='\n', str)
         if pos < length(str)
             firstnonspace = match(r"\S", str[pos:end])
             if firstnonspace != nothing
