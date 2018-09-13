@@ -101,17 +101,14 @@ end
 function setOutputText(line, text)
     global outputText
     outputLines = split(outputText, '\n')
-    println("before: $outputLines")
     textLines = split(text, '\n')
     while length(outputLines) <= line + length(textLines)
         push!(outputLines, "")
     end
     start, finish = line, line+numlines(text)-1
-    println("$start, $finish")
     outputLines[start:finish] = textLines
     # Must use @js_ since no return value required. (@js hangs)
     #@js_ w outputarea.replaceRange($text, CodeMirror.Pos($start, 0), CodeMirror.Pos($finish, 0))
-    println("after: $outputLines")
     outputText = join(outputLines, "\n")
     @js_ w outputarea.setValue($outputText)
 end
