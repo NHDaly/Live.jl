@@ -15,9 +15,7 @@ function parseall(str)
         end
         push!(exprs, LineNumberNode(linenum, :none))
         ex, pos = parse(str, pos) # returns next starting point as well as expr
-        if ex isa Symbol
-            push!(exprs, ex)
-        elseif ex isa Expr
+        if ex isa Expr
             ex.head == :toplevel ? exs = ex.args : exs = [ex] #see StackOverflow comments for info
             for ex in exs
                 #if ex.head == :using
@@ -26,6 +24,8 @@ function parseall(str)
                 push!(exprs, ex)
                 #end
             end
+        else  # Symbol/Literal
+            push!(exprs, ex)
         end
     end
     if length(exprs) == 0
