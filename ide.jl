@@ -1,4 +1,5 @@
 using Blink
+using DataStructures: DefaultDict
 
 include("parsefile.jl")
 
@@ -177,10 +178,16 @@ function testfunction(firstline, node, f, lastline, test_context)
     for node in body.args
         if isa(node, LineNumberNode)
             lastline = node.line
+            continue
         end
         try
-            out = Core.eval(FunctionModule, node)
-            setOutputText(firstline + lastline-1, repr(out))
+            # Handle special-cases
+            if isa(node, Expr) && node.head == :while
+                handle_while_loop(FunctionModule, node, firstline)
+            else
+                out = Core.eval(FunctionModule, node)
+                setOutputText(firstline + lastline-1, repr(out))
+            end
         catch e
             println("testfunction ERROR: $e")
         end
@@ -327,3 +334,25 @@ js(w, Blink.JSString("""
   """))
 Blink.handlers(w)["save"] = save_dialog
 Blink.handlers(w)["open"] = open_dialog
+
+# Weird code stuff
+function handle_while_loop(FunctionModule, node, firstline)
+    global whilenode = node
+    test = node.args[1]
+    body = node.args[2]
+    lineouts = DefaultDict{Int, Array}(()->[])
+    lastline = 1
+    while Core.eval(FunctionModule, test)
+        for node in body.args
+            if isa(node, LineNumberNode)
+                lastline = node.line
+                continue
+            end
+            out = Core.eval(FunctionModule, node)
+            push!(lineouts[firstline + lastline-1], repr(out))
+        end
+    end
+    for (line, outs) in lineouts
+        setOutputText(line, join(outs, ", "))
+    end
+end
