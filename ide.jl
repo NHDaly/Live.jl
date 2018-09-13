@@ -125,13 +125,14 @@ function editorchange(editortext)
         outputText = ""  # Start by clearing output each iteration
         setOutputText(1, '\n'^numlines(text))
         test_next_function = false
+        test_context = nothing
         nextfunction = nothing
         run_at_next_linenode = false
         for node in parsed.args
             if isa(node, LineNumberNode)
                 lastline = node.line
                 if run_at_next_linenode
-                    testfunction(nextfunction..., lastline)
+                    testfunction(nextfunction..., lastline, test_context)
                     run_at_next_linenode = false
                 end
             end
@@ -144,6 +145,7 @@ function editorchange(editortext)
                 end
                 if testline_requested(out)
                     test_next_function =  true
+                    test_context = out.args
                 elseif out != nothing
                     setOutputText(lastline, repr(out))
                 end
@@ -158,9 +160,13 @@ function editorchange(editortext)
 end
 Blink.handlers(w)["editorchange"] = editorchange
 
-function testfunction(firstline, node, f, lastline)
+function testfunction(firstline, node, f, lastline, test_context)
     # Everything evaluated here should be within this new module.
     FunctionModule = Module(:FunctionModule)
+    # First, eval the context
+    for e in test_context
+        Core.eval(FunctionModule, e)
+    end
     #println("$firstline, $node, $f, $lastline")
     global fnode = node
     global body = fnode.args[2]
