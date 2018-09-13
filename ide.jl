@@ -24,7 +24,7 @@ load!(w, "frameworks/codemirror-5.40.0/mode/julia/julia.js")
 
 
 html() = """
-  <table width="100%">
+  <table width="100%" height="100%">
    <tbody>
     <tr>
      <td>
@@ -38,6 +38,9 @@ html() = """
   </table>
 
   <style>
+    html, body, table, .CodeMirror {
+        height: 100%;
+    }
     table {
         border-collapse: collapse;
     }
@@ -72,8 +75,6 @@ global outputText = @js w outputarea.getValue()
              console.log("sent msg to julia!");))
 
 # User code parsing + eval
-module UserCode end
-
 numlines(str) = 1+count(c->c=='\n', str)
 
 function setOutputText(line, text)
@@ -90,6 +91,7 @@ function setOutputText(line, text)
     #@js_ w outputarea.replaceRange($text, CodeMirror.Pos($start, 0), CodeMirror.Pos($finish, 0))
     #println("after: $outputLines")
     outputText = join(outputLines, "\n")
+    outputText = rstrip(outputText)
     @js_ w outputarea.setValue($outputText)
 end
 
@@ -112,10 +114,15 @@ testline_requested(_::Live.TestLine) = true
 text = ""
 function editorchange(editortext)
     try  # So errors don't crash my Blink window...
+        # Everything evaluated is within this new module each iteration.
+        UserCode = Module(:UserCode)
+
         global text, parsed
         text = editortext
         parsed = parseall(editortext)
         lastline = 1
+        global outputText
+        outputText = ""  # Start by clearing output each iteration
         setOutputText(1, '\n'^numlines(text))
         test_next_function = false
         nextfunction = nothing
@@ -151,8 +158,9 @@ function editorchange(editortext)
 end
 Blink.handlers(w)["editorchange"] = editorchange
 
-module FunctionModule end
 function testfunction(firstline, node, f, lastline)
+    # Everything evaluated here should be within this new module.
+    FunctionModule = Module(:FunctionModule)
     #println("$firstline, $node, $f, $lastline")
     global fnode = node
     global body = fnode.args[2]
