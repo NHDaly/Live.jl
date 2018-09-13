@@ -5,16 +5,17 @@ function parseall(str)
     exprs = []
     parsed = nothing
     while !done(str, pos)
-            linenum = 1+count(c->c=='\n', str)
+        linenum = 1
+        nextstart = pos
         if pos < length(str)
             firstnonspace = match(r"\S", str[pos:end])
             if firstnonspace != nothing
-                index = pos + firstnonspace.offset - 1
-                linenum = 1+count(c->c=='\n', str[1:index])
+                nextstart = pos + firstnonspace.offset - 1
+                linenum = 1+count(c->c=='\n', str[1:nextstart])
             end
         end
         push!(exprs, LineNumberNode(linenum, :none))
-        ex, pos = parse(str, pos) # returns next starting point as well as expr
+        ex, pos = parse(str, nextstart) # returns next starting point as well as expr
         if ex isa Expr
             ex.head == :toplevel ? exs = ex.args : exs = [ex] #see StackOverflow comments for info
             for ex in exs
