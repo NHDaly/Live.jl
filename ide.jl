@@ -81,22 +81,11 @@ global outputText = @js w outputarea.getValue()
 # User code parsing + eval
 numlines(str) = 1+count(c->c=='\n', str)
 
-function setOutputText(line, text)
-    global outputText
-    outputLines = split(outputText, '\n')
-    #println("before: $outputLines")
-    textLines = split(text, '\n')
-    while length(outputLines) <= line + length(textLines)
-        push!(outputLines, "")
+function setOutputText(linesdict, line, text)
+    textlines = split(text, '\n')
+    for l in 1:length(textlines)
+        linesdict[line+l-1] = textlines[l]
     end
-    start, finish = line, line+numlines(text)-1
-    outputLines[start:finish] = textLines
-    # Must use @js_ since no return value required. (@js hangs)
-    #@js_ w outputarea.replaceRange($text, CodeMirror.Pos($start, 0), CodeMirror.Pos($finish, 0))
-    #println("after: $outputLines")
-    outputText = join(outputLines, "\n")
-    outputText = rstrip(outputText)
-    @js_ w outputarea.setValue($outputText)
 end
 
 
@@ -121,13 +110,12 @@ function editorchange(editortext)
         # Everything evaluated is within this new module each iteration.
         UserCode = Module(:UserCode)
 
+        global outputlines = DefaultDict{Int,String}("")
+
         global text, parsed
         text = editortext
         parsed = parseall(editortext)
         lastline = 1
-        global outputText
-        outputText = ""  # Start by clearing output each iteration
-        setOutputText(1, '\n'^numlines(text))
         test_next_function = false
         test_context = nothing
         nextfunction = nothing
@@ -141,6 +129,9 @@ function editorchange(editortext)
                 end
             end
             try
+                # TODO: use evalnode here
+                #if isa(node, Expr) && node.head == :function
+                #end
                 out = Core.eval(UserCode, node)
                 if test_next_function && isa(out, Function)
                     nextfunction = (lastline, node, out)
@@ -151,12 +142,21 @@ function editorchange(editortext)
                     test_next_function =  true
                     test_context = out.args
                 elseif out != nothing
-                    setOutputText(lastline, repr(out))
+                    setOutputText(outputlines, lastline, repr(out))
                 end
             catch e
-                setOutputText(lastline, string(e))
+                setOutputText(outputlines, lastline, string(e))
             end
         end
+        # -- UPDATE OUTPUT AT END OF THE LOOP --
+
+        # Must use @js_ since no return value required. (@js hangs)
+        #@js_ w outputarea.replaceRange($text, CodeMirror.Pos($start, 0), CodeMirror.Pos($finish, 0))
+        #println("after: $outputlines")
+        maxline = max(length(editortext), maximum(keys(outputlines)))
+        outputText = join([outputlines[i] for i in 1:maxline], "\n")
+        outputText = rstrip(outputText)
+        @js_ w outputarea.setValue($outputText)
     catch err
         println("ERROR: $err")
     end
@@ -174,23 +174,10 @@ function testfunction(firstline, node, f, lastline, test_context)
     #println("$firstline, $node, $f, $lastline")
     global fnode = node
     global body = fnode.args[2]
-    lastline = 1
-    for node in body.args
-        if isa(node, LineNumberNode)
-            lastline = node.line
-            continue
-        end
-        try
-            # Handle special-cases
-            if isa(node, Expr) && node.head == :while
-                handle_while_loop(FunctionModule, node, firstline)
-            else
-                out = Core.eval(FunctionModule, node)
-                setOutputText(firstline + lastline-1, repr(out))
-            end
-        catch e
-            println("testfunction ERROR: $e")
-        end
+    try
+        evalblock(FunctionModule, body, firstline, 1)
+    catch e
+        println("testfunction ERROR: $e")
     end
 end
 
@@ -340,19 +327,54 @@ function handle_while_loop(FunctionModule, node, firstline)
     global whilenode = node
     test = node.args[1]
     body = node.args[2]
-    lineouts = DefaultDict{Int, Array}(()->[])
     lastline = 1
     while Core.eval(FunctionModule, test)
-        for node in body.args
-            if isa(node, LineNumberNode)
-                lastline = node.line
-                continue
-            end
-            out = Core.eval(FunctionModule, node)
-            push!(lineouts[firstline + lastline-1], repr(out))
-        end
+        lastline = evalblock(FunctionModule, body, firstline, lastline)
     end
-    for (line, outs) in lineouts
-        setOutputText(line, join(outs, ", "))
+end
+
+function evalnode(FunctionModule, node, firstline, lastline)
+    if isa(node, LineNumberNode)
+        return node.line
+    end
+    # Handle special-cases
+    if isa(node, Expr) && node.head == :block
+        evalblock(FunctionModule, node, firstline, lastline)
+    elseif isa(node, Expr) && node.head == :while
+        handle_while_loop(FunctionModule, node, firstline)
+    elseif isa(node, Expr) && node.head == :if
+        handle_if(FunctionModule, node, firstline, lastline, outputlines)
+    else
+        out = Core.eval(FunctionModule, node)
+        setOutputText(outputlines, firstline + lastline-1, repr(out))
+    end
+end
+function evalblock(FunctionModule, blocknode, firstline, lastline)
+    #lineouts = DefaultDict{Int, Array}(()->[])
+    for node in blocknode.args
+        global gnode = node
+        lastline = evalnode(FunctionModule, node, firstline, lastline)
+        global pnode = node
+        #push!(lineouts[firstline + lastline-1], repr(out))
+    end
+    #for (line, outs) in lineouts
+    #    setOutputText(outputlines, line, join(outs, ", "))
+    #end
+    return lastline
+end
+
+function handle_if(FunctionModule, node, firstline, offsetline, outputlines)
+    global ifnode = node
+    test = node.args[1]
+    trueblock = node.args[2]
+    restblock = if (length(node.args) > 2) node.args[3] else nothing end
+    testval = Core.eval(FunctionModule, test)
+    #setOutputText(outputlines, firstline, repr(testval))
+    if testval
+        evalnode(FunctionModule, trueblock, firstline, offsetline)
+    elseif restblock.head == :elseif
+        handle_if(FunctionModule, restblock, firstline, offsetline, outputlines)
+    else
+        evalnode(FunctionModule, restblock, firstline, offsetline)
     end
 end
