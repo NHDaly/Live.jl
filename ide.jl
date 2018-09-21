@@ -110,7 +110,7 @@ function editorchange(editortext)
         # Everything evaluated is within this new module each iteration.
         UserCode = Module(:UserCode)
 
-        global outputlines = DefaultDict{Int,String}("")
+        outputlines = DefaultDict{Int,String}("")
 
         global text, parsed
         text = editortext
@@ -124,7 +124,7 @@ function editorchange(editortext)
             if isa(node, LineNumberNode)
                 lastline = node.line
                 if run_at_next_linenode
-                    testfunction(nextfunction..., lastline, test_context)
+                    testfunction(nextfunction..., lastline, test_context, outputlines)
                     run_at_next_linenode = false
                 end
             end
@@ -164,7 +164,7 @@ function editorchange(editortext)
 end
 Blink.handlers(w)["editorchange"] = editorchange
 
-function testfunction(firstline, node, f, lastline, test_context)
+function testfunction(firstline, node, f, lastline, test_context, outputlines)
     # Everything evaluated here should be within this new module.
     FunctionModule = Module(:FunctionModule)
     # First, eval the context
@@ -175,7 +175,7 @@ function testfunction(firstline, node, f, lastline, test_context)
     global fnode = node
     global body = fnode.args[2]
     try
-        evalblock(FunctionModule, body, firstline, 1)
+        evalblock(FunctionModule, body, firstline, 1, outputlines)
     catch e
         println("testfunction ERROR: $e")
     end
@@ -323,25 +323,37 @@ Blink.handlers(w)["save"] = save_dialog
 Blink.handlers(w)["open"] = open_dialog
 
 # Weird code stuff
-function handle_while_loop(FunctionModule, node, firstline)
+function handle_while_loop(FunctionModule, node, firstline, outputlines)
     global whilenode = node
     test = node.args[1]
     body = node.args[2]
     lastline = 1
+    iteration_outputs = []
     while Core.eval(FunctionModule, test)
-        lastline = evalblock(FunctionModule, body, firstline, lastline)
+        loopoutputs = DefaultDict{Int,String}("")
+        lastline = evalblock(FunctionModule, body, firstline, lastline, loopoutputs)
+        push!(iteration_outputs, loopoutputs)
+    end
+    lineouts = DefaultDict{Int, Array{String}}(()->[])
+    for outputs in iteration_outputs
+        for (l, s) in outputs
+            push!(lineouts[l], s)
+        end
+    end
+    for (line, outs) in lineouts
+        setOutputText(outputlines, line, join(outs, ", "))
     end
 end
 
-function evalnode(FunctionModule, node, firstline, lastline)
+function evalnode(FunctionModule, node, firstline, lastline, outputlines)
     if isa(node, LineNumberNode)
         return node.line
     end
     # Handle special-cases
     if isa(node, Expr) && node.head == :block
-        evalblock(FunctionModule, node, firstline, lastline)
+        evalblock(FunctionModule, node, firstline, lastline, outputlines)
     elseif isa(node, Expr) && node.head == :while
-        handle_while_loop(FunctionModule, node, firstline)
+        handle_while_loop(FunctionModule, node, firstline, outputlines)
     elseif isa(node, Expr) && node.head == :if
         handle_if(FunctionModule, node, firstline, lastline, outputlines)
     else
@@ -349,17 +361,12 @@ function evalnode(FunctionModule, node, firstline, lastline)
         setOutputText(outputlines, firstline + lastline-1, repr(out))
     end
 end
-function evalblock(FunctionModule, blocknode, firstline, lastline)
-    #lineouts = DefaultDict{Int, Array}(()->[])
+function evalblock(FunctionModule, blocknode, firstline, lastline, outputlines)
     for node in blocknode.args
         global gnode = node
-        lastline = evalnode(FunctionModule, node, firstline, lastline)
+        lastline = evalnode(FunctionModule, node, firstline, lastline, outputlines)
         global pnode = node
-        #push!(lineouts[firstline + lastline-1], repr(out))
     end
-    #for (line, outs) in lineouts
-    #    setOutputText(outputlines, line, join(outs, ", "))
-    #end
     return lastline
 end
 
@@ -371,10 +378,10 @@ function handle_if(FunctionModule, node, firstline, offsetline, outputlines)
     testval = Core.eval(FunctionModule, test)
     #setOutputText(outputlines, firstline, repr(testval))
     if testval
-        evalnode(FunctionModule, trueblock, firstline, offsetline)
+        evalnode(FunctionModule, trueblock, firstline, offsetline, outputlines)
     elseif restblock.head == :elseif
         handle_if(FunctionModule, restblock, firstline, offsetline, outputlines)
     else
-        evalnode(FunctionModule, restblock, firstline, offsetline)
+        evalnode(FunctionModule, restblock, firstline, offsetline, outputlines)
     end
 end
