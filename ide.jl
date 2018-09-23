@@ -108,7 +108,7 @@ text = ""
 function editorchange(editortext)
     try  # So errors don't crash my Blink window...
         # Everything evaluated is within this new module each iteration.
-        UserCode = Module(:UserCode)
+        global UserCode = Module(:UserCode)
 
         outputlines = DefaultDict{Int,String}("")
 
@@ -164,9 +164,18 @@ function editorchange(editortext)
 end
 Blink.handlers(w)["editorchange"] = editorchange
 
+function import_names_into(destmodule, srcmodule)
+    fullsrcname = join(fullname(srcmodule), ".")
+    for n in names(srcmodule, all=true)
+        if !(n in [Symbol("#eval"), Symbol("#include"), :eval, :include])
+            Core.eval(destmodule, :($n = Main.$(nameof(srcmodule)).$n))
+        end
+    end
+end
 function testfunction(firstline, node, f, lastline, test_context, outputlines)
     # Everything evaluated here should be within this new module.
-    FunctionModule = Module(:FunctionModule)
+    FunctionModule = Module(:(FunctionModule))
+    import_names_into(FunctionModule, UserCode)
     # First, eval the context
     for e in test_context
         Core.eval(FunctionModule, e)
