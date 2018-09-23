@@ -422,7 +422,7 @@ function handle_if(FunctionModule, node, firstline, offsetline, outputlines)
     #setOutputText(outputlines, firstline, repr(testval))
     if testval
         evalnode(FunctionModule, trueblock, firstline, offsetline, outputlines)
-    elseif restblock.head == :elseif
+    elseif restblock != nothing && restblock.head == :elseif
         handle_if(FunctionModule, restblock, firstline, offsetline, outputlines)
     else
         evalnode(FunctionModule, restblock, firstline, offsetline, outputlines)
