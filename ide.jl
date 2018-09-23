@@ -351,7 +351,12 @@ function handle_for_loop(FunctionModule, node, firstline, lastline, outputlines)
         end
         display_loop_lines(outputlines, iteration_outputs)
     catch e
+        # TODO: Simplify this error handling by having a global line counter & _maybe_ even a global outputlines.
         setOutputText(outputlines, firstline+lastline-1, repr(e))
+        # TODO: Re-evaluate this decision.. maybe there's no reason to rethrow here at all!
+        #   Maybe it's _cool_ that it keeps evaluating as best it can! Something to consider.
+        #   Also, removing these would be easier, i think.
+        #   Oooh, the coolest thing would be like, to make the rest of the output red or something!
         throw(e)
     end
 end
@@ -363,7 +368,13 @@ function handle_while_loop(FunctionModule, node, firstline, outputlines)
     lastline = 1
     while Core.eval(FunctionModule, test)
         loopoutputs = DefaultDict{Int,String}("")
-        lastline = evalblock(FunctionModule, body, firstline, lastline, loopoutputs)
+        try
+            lastline = evalblock(FunctionModule, body, firstline, lastline, loopoutputs)
+        catch e
+            push!(iteration_outputs, loopoutputs)
+            display_loop_lines(outputlines, iteration_outputs)
+            throw(e)
+        end
         push!(iteration_outputs, loopoutputs)
     end
     display_loop_lines(outputlines, iteration_outputs)
