@@ -338,7 +338,7 @@ function handle_for_loop(FunctionModule, node, firstline, lastline, outputlines)
         iteration_outputs = []
         while temp != nothing
             loopoutputs = DefaultDict{Int,String}("")
-            Core.eval(FunctionModule, :($itervariable = $(temp[1])))
+            Core.eval(FunctionModule, :($itervariable = $(Expr(:quote, temp[1]))))
             try
                 lastline = evalblock(FunctionModule, body, firstline, lastline, loopoutputs)
             catch e
