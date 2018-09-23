@@ -178,6 +178,8 @@ function testfunction(firstline, node, f, lastline, test_context, outputlines)
         evalblock(FunctionModule, body, firstline, 1, outputlines)
     catch e
         println("testfunction ERROR: $e")
+        setOutputText(outputlines, firstline+lastline-1, repr(e))
+        return
     end
 end
 
@@ -323,17 +325,51 @@ Blink.handlers(w)["save"] = save_dialog
 Blink.handlers(w)["open"] = open_dialog
 
 # Weird code stuff
+function handle_for_loop(FunctionModule, node, firstline, lastline, outputlines)
+    global fornode = node
+    iterspec_node = node.args[1]
+    body = node.args[2]
+    # Modify the iteration specification variable's name to a temp.
+    itervariable = iterspec_node.args[1]
+    # Start interpreting the for-loop
+    try
+        iterspec = Core.eval(FunctionModule, iterspec_node.args[2])  # just the range itself
+        temp = Base.iterate(iterspec)
+        iteration_outputs = []
+        while temp != nothing
+            loopoutputs = DefaultDict{Int,String}("")
+            Core.eval(FunctionModule, :($itervariable = $(temp[1])))
+            try
+                lastline = evalblock(FunctionModule, body, firstline, lastline, loopoutputs)
+            catch e
+                push!(iteration_outputs, loopoutputs)
+                display_loop_lines(outputlines, iteration_outputs)
+                throw(e)
+            end
+            push!(iteration_outputs, loopoutputs)
+            temp = Base.iterate(iterspec, temp[2])
+        end
+        display_loop_lines(outputlines, iteration_outputs)
+    catch e
+        setOutputText(outputlines, firstline+lastline-1, repr(e))
+        throw(e)
+    end
+end
 function handle_while_loop(FunctionModule, node, firstline, outputlines)
     global whilenode = node
     test = node.args[1]
     body = node.args[2]
-    lastline = 1
     iteration_outputs = []
+    lastline = 1
     while Core.eval(FunctionModule, test)
         loopoutputs = DefaultDict{Int,String}("")
         lastline = evalblock(FunctionModule, body, firstline, lastline, loopoutputs)
         push!(iteration_outputs, loopoutputs)
     end
+    display_loop_lines(outputlines, iteration_outputs)
+end
+function display_loop_lines(outputlines, iteration_outputs)
+    # For now, just append each iteration's outputs on the line.
     lineouts = DefaultDict{Int, Array{String}}(()->[])
     for outputs in iteration_outputs
         for (l, s) in outputs
@@ -346,19 +382,26 @@ function handle_while_loop(FunctionModule, node, firstline, outputlines)
 end
 
 function evalnode(FunctionModule, node, firstline, lastline, outputlines)
-    if isa(node, LineNumberNode)
-        return node.line
-    end
-    # Handle special-cases
-    if isa(node, Expr) && node.head == :block
-        evalblock(FunctionModule, node, firstline, lastline, outputlines)
-    elseif isa(node, Expr) && node.head == :while
-        handle_while_loop(FunctionModule, node, firstline, outputlines)
-    elseif isa(node, Expr) && node.head == :if
-        handle_if(FunctionModule, node, firstline, lastline, outputlines)
-    else
-        out = Core.eval(FunctionModule, node)
-        setOutputText(outputlines, firstline + lastline-1, repr(out))
+    try
+        if isa(node, LineNumberNode)
+            return node.line
+        end
+        # Handle special-cases
+        if isa(node, Expr) && node.head == :block
+            evalblock(FunctionModule, node, firstline, lastline, outputlines)
+        elseif isa(node, Expr) && node.head == :while
+            handle_while_loop(FunctionModule, node, firstline, outputlines)
+        elseif isa(node, Expr) && node.head == :for
+            handle_for_loop(FunctionModule, node, firstline, lastline, outputlines)
+        elseif isa(node, Expr) && node.head == :if
+            handle_if(FunctionModule, node, firstline, lastline, outputlines)
+        else
+            out = Core.eval(FunctionModule, node)
+            setOutputText(outputlines, firstline + lastline-1, repr(out))
+        end
+    catch e
+        setOutputText(outputlines, firstline+lastline-1, repr(e))
+        throw(e)
     end
 end
 function evalblock(FunctionModule, blocknode, firstline, lastline, outputlines)
