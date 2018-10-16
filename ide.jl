@@ -133,6 +133,18 @@ function editorchange(editortext)
                 #if isa(node, Expr) && node.head == :function
                 #end
                 out = Core.eval(UserCode, node)
+                if isa(node, Expr) && node.head == :struct && out == nothing
+                    println("struct: $node")
+                    # Assuming struct definition has no output (like usual),
+                    # let's make the output be: `dump(StructName)`
+                    # (handle parametric types)
+                    parametric = node.args[2] isa Expr
+                    structName = (parametric ? node.args[2].args[1] : node.args[2])
+                    dumpedOutput = Core.eval(UserCode, quote
+                        sprint(io->dump(io, $parametric ? $structName.body : $structName))
+                    end)
+                    setOutputText(outputlines, lastline, dumpedOutput)
+                end
                 if test_next_function && isa(out, Function)
                     nextfunction = (lastline, node, out)
                     test_next_function = false
@@ -149,16 +161,18 @@ function editorchange(editortext)
             end
         end
         # -- UPDATE OUTPUT AT END OF THE LOOP --
+        maximum_or_default(itr, default) = isempty(itr) ? default : maximum(itr)
 
         # Must use @js_ since no return value required. (@js hangs)
         #@js_ w outputarea.replaceRange($text, CodeMirror.Pos($start, 0), CodeMirror.Pos($finish, 0))
         #println("after: $outputlines")
-        maxline = max(length(editortext), maximum(keys(outputlines)))
+        maxline = max(length(editortext), maximum_or_default(keys(outputlines),0))
         outputText = join([outputlines[i] for i in 1:maxline], "\n")
         outputText = rstrip(outputText)
         @js_ w outputarea.setValue($outputText)
     catch err
         println("ERROR: $err")
+        rethrow(err)
     end
     nothing
 end
