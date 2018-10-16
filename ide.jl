@@ -4,7 +4,7 @@ using DataStructures: DefaultDict
 include("parsefile.jl")
 
 cd(@__DIR__)
-w = Window(Blink.@d(:async=>false))
+w = Window(async=false)
 #tools(w)
 
 # Set up to allow loading modules
@@ -17,13 +17,13 @@ js(w, Blink.JSString("""
     delete window.module;
  """))
 
-load!(w, "frameworks/jquery-3.3.1.js")
+load!(w, "frameworks/jquery-3.3.1.js", async=true)
 
 # Load codemirror
-load!(w, "frameworks/codemirror-5.40.0/lib/codemirror.js")
-load!(w, "frameworks/codemirror-5.40.0/lib/codemirror.css")
+load!(w, "frameworks/codemirror-5.40.0/lib/codemirror.js", async=false)
+load!(w, "frameworks/codemirror-5.40.0/lib/codemirror.css", async=true)
 # Set up for julia:
-load!(w, "frameworks/codemirror-5.40.0/mode/julia/julia.js")
+load!(w, "frameworks/codemirror-5.40.0/mode/julia/julia.js", async=true)
 
 
 html() = """

@@ -1,13 +1,13 @@
 # https://stackoverflow.com/a/46366560/751061
 # modified from the julia source ./test/parse.jl
 function parseall(str)
-    pos = start(str)
+    pos = firstindex(str)
     exprs = []
     parsed = nothing
-    while !done(str, pos)
+    while pos <= ncodeunits(str)
         linenum = 1
         nextstart = pos
-        if pos < length(str)
+        if pos < ncodeunits(str)
             firstnonspace = match(r"\S", str[pos:end])
             if firstnonspace != nothing
                 nextstart = pos + firstnonspace.offset - 1
@@ -15,14 +15,14 @@ function parseall(str)
             end
         end
         push!(exprs, LineNumberNode(linenum, :none))
-        ex, pos = parse(str, nextstart) # returns next starting point as well as expr
+        ex, pos = Meta.parse(str, nextstart) # returns next starting point as well as expr
         if ex isa Expr
             ex.head == :toplevel ? exs = ex.args : exs = [ex] #see StackOverflow comments for info
-            for ex in exs
-                #if ex.head == :using
-                #    eval(ex)  # eval :using Expressions globally rather than inserting.
+            for e in exs
+                #if e.head == :using
+                #    eval(e)  # eval :using Expressions globally rather than inserting.
                 #else
-                push!(exprs, ex)
+                push!(exprs, e)
                 #end
             end
         else  # Symbol/Literal
