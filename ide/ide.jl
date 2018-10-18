@@ -1,3 +1,5 @@
+module LiveIDE
+
 using Blink
 using DataStructures: DefaultDict
 
@@ -6,79 +8,86 @@ using Live # Define the Live macro for use in the IDE
 include("parsefile.jl")
 
 cd(@__DIR__)
-w = Window(async=false)
-#tools(w)
 
-# Set up to allow loading modules
-js(w, Blink.JSString("""
-    window.nodeRequire = require;
-    window.nodeExports = window.exports;
-    window.nodeModule = window.module;
-    delete window.require;
-    delete window.exports;
-    delete window.module;
- """))
+function new_window()
+    w = Window(async=false)
+    #tools(w)
 
-load!(w, "frameworks/jquery-3.3.1.js", async=true)
+    # Set up to allow loading modules
+    js(w, Blink.JSString("""
+        window.nodeRequire = require;
+        window.nodeExports = window.exports;
+        window.nodeModule = window.module;
+        delete window.require;
+        delete window.exports;
+        delete window.module;
+     """))
 
-# Load codemirror
-load!(w, "frameworks/codemirror-5.40.0/lib/codemirror.js", async=false)
-load!(w, "frameworks/codemirror-5.40.0/lib/codemirror.css", async=true)
-# Set up for julia:
-load!(w, "frameworks/codemirror-5.40.0/mode/julia/julia.js", async=true)
+    load!(w, "frameworks/jquery-3.3.1.js", async=true)
+
+    # Load codemirror
+    load!(w, "frameworks/codemirror-5.40.0/lib/codemirror.js", async=false)
+    load!(w, "frameworks/codemirror-5.40.0/lib/codemirror.css", async=true)
+    # Set up for julia:
+    load!(w, "frameworks/codemirror-5.40.0/mode/julia/julia.js", async=true)
 
 
-html() = """
-  <table width="100%" height="100%">
-   <tbody>
-    <tr>
-     <td>
-       <textarea id="text-editor">function myScript()\n   return 100\nend\n</textarea>
-     </td>
-     <td>
-       <textarea id="output-area">output</textarea>
-     </td>
-    </tr>
-   </tbody>
-  </table>
+    html() = """
+      <table width="100%" height="100%">
+       <tbody>
+        <tr>
+         <td>
+           <textarea id="text-editor">function myScript()\n   return 100\nend\n</textarea>
+         </td>
+         <td>
+           <textarea id="output-area">output</textarea>
+         </td>
+        </tr>
+       </tbody>
+      </table>
 
-  <style>
-    html, body, table, .CodeMirror {
-        height: 100%;
-    }
-    table {
-        border-collapse: collapse;
-    }
-    td, th {
-        border: 1px solid gray;
-        padding: 3px;
-        width: 50%;
-    }
-  </style>
- """
+      <style>
+        html, body, table, .CodeMirror {
+            height: 100%;
+        }
+        table {
+            border-collapse: collapse;
+        }
+        td, th {
+            border: 1px solid gray;
+            padding: 3px;
+            width: 50%;
+        }
+      </style>
+     """
 
-# Start the editor:
-body!(w, html(), async=false)
-js(w, Blink.JSString(raw"""
-    texteditor = CodeMirror.fromTextArea($("#text-editor")[0], {
-        lineNumbers: true,
-        mode:  "julia"
-    });
-    undefined;  // Don't return the CodeMirror object
- """))
-js(w, Blink.JSString(raw"""
-    outputarea = CodeMirror.fromTextArea($("#output-area")[0], {
-        readOnly: true,
-        mode:  "julia"
-    });
-    undefined;  // Don't return the CodeMirror object
- """))
+    # Start the editor:
+    body!(w, html(), async=false)
+    js(w, Blink.JSString(raw"""
+        texteditor = CodeMirror.fromTextArea($("#text-editor")[0], {
+            lineNumbers: true,
+            mode:  "julia"
+        });
+        undefined;  // Don't return the CodeMirror object
+     """))
+    js(w, Blink.JSString(raw"""
+        outputarea = CodeMirror.fromTextArea($("#output-area")[0], {
+            readOnly: true,
+            mode:  "julia"
+        });
+        undefined;  // Don't return the CodeMirror object
+     """))
 
-global outputText = @js w outputarea.getValue()
+    global outputText = @js w outputarea.getValue()
 
-@js w texteditor.on("update",
-    (cm) -> (Blink.msg("editorchange", cm.getValue());
-             console.log("sent msg to julia!");))
+    @js w texteditor.on("update",
+        (cm) -> (Blink.msg("editorchange", cm.getValue());
+                 console.log("sent msg to julia!");))
+
+    Blink.handlers(w)["editorchange"] = (txt)->editorchange(w,txt)
+
+    set_up_menubar(w)
+end
 
 # User code parsing + eval
 numlines(str) = 1+count(c->c=='\n', str)
@@ -90,13 +99,11 @@ function setOutputText(linesdict, line, text)
     end
 end
 
-
 is_function_testline_request(_) = false
 is_function_testline_request(_::Live.TestLine) = true
 
-text = ""
-function editorchange(editortext)
-    try  # So errors don't crash my Blink window...
+function editorchange(w, editortext)
+    #try  # So errors don't crash my Blink window...
         # Everything evaluated is within this new module each iteration.
         # TODO: change this to :Main once the Live module is in a real package!
         global UserCode = Module(:LiveMain)
@@ -104,9 +111,8 @@ function editorchange(editortext)
 
         outputlines = DefaultDict{Int,String}("")
 
-        global text, parsed
-        text = editortext
-        parsed = parseall(editortext)
+        global text = editortext
+        global parsed = parseall(editortext)
         try
             # TODO: ooh, we should also probably swipe stdout so that it also
             # writes to the app. Perhaps in a different type of output div.
@@ -123,12 +129,11 @@ function editorchange(editortext)
         outputText = join([outputlines[i] for i in 1:maxline], "\n")
         outputText = rstrip(outputText)
         @js_ w outputarea.setValue($outputText)
-    catch err
-        println("ERROR: $err")
-    end
+    #catch err
+        #println("ERROR: $err")
+    #end
     nothing
 end
-Blink.handlers(w)["editorchange"] = editorchange
 
 function evalnode(FunctionModule, node, firstline, latestline, outputlines)
     evalblock(FunctionModule, Expr(:block, node), firstline, latestline, outputlines)
@@ -366,142 +371,146 @@ function livetest_function(ScopeModule, firstline, latestline, node, test_contex
 end
 
 
-
-# --- FILE API ---
-# Set up dialog
-js(w, Blink.JSString(""" dialog = nodeRequire('electron').remote.dialog; """))
-function open_dialog(selectedfiles)
-    println(selectedfiles)
-    if selectedfiles == nothing || isempty(selectedfiles) || selectedfiles[1] == ""
-        return
+function set_up_menubar(w)
+    # --- FILE API ---
+    # Set up dialog
+    js(w, Blink.JSString(""" dialog = nodeRequire('electron').remote.dialog; """))
+    function open_dialog(selectedfiles)
+        println(selectedfiles)
+        if selectedfiles == nothing || isempty(selectedfiles) || selectedfiles[1] == ""
+            return
+        end
+        contents = read(selectedfiles[1], String)
+        println(contents)
+        @js_ w texteditor.setValue($contents)
     end
-    contents = read(selectedfiles[1], String)
-    println(contents)
-    @js_ w texteditor.setValue($contents)
-end
 
-save_dialog(args::Array) = save_dialog(args...)
-function save_dialog(selectedfile, contents)
-    println(selectedfile)
-    if selectedfile == nothing || selectedfile == ""
-        return
+    save_dialog(args::Array) = save_dialog(args...)
+    function save_dialog(selectedfile, contents)
+        println(selectedfile)
+        if selectedfile == nothing || selectedfile == ""
+            return
+        end
+        write(selectedfile, contents)
+        println(contents)
     end
-    write(selectedfile, contents)
-    println(contents)
-end
 
 
-# Javascript: Create app menus
+    # Javascript: Create app menus
+    js(w, Blink.JSString("""
+        const {app, Menu} = nodeRequire('electron').remote
 
-js(w, Blink.JSString("""
-    const {app, Menu} = nodeRequire('electron').remote
+        function clickOpen(menuItem, browserWindow, event) {
+            selectedfiles = dialog.showOpenDialog({properties: ['openFile']});
+            console.log(selectedfiles)
+            Blink.msg("open", selectedfiles);
+        }
+        function clickSave(menuItem, browserWindow, event) {
+            selectedfile = dialog.showSaveDialog({});
+            console.log(selectedfile)
+            Blink.msg("save", [selectedfile, texteditor.getValue()]);
+        }
 
-    function clickOpen(menuItem, browserWindow, event) {
-        selectedfiles = dialog.showOpenDialog({properties: ['openFile']});
-        console.log(selectedfiles)
-        Blink.msg("open", selectedfiles);
-    }
-    function clickSave(menuItem, browserWindow, event) {
-        selectedfile = dialog.showSaveDialog({});
-        console.log(selectedfile)
-        Blink.msg("save", [selectedfile, texteditor.getValue()]);
-    }
-
-      const template = [
-        {
-          label: 'File',
-          submenu: [
-            {label: 'Open', click: clickOpen, accelerator:'CommandOrControl+O'},
-            {type: 'separator'},
-            {label: 'Save', click: clickSave, accelerator:'CommandOrControl+S' },
-          ]
-        },
-        {
-          label: 'Edit',
-          submenu: [
-            {role: 'undo'},
-            {role: 'redo'},
-            {type: 'separator'},
-            {role: 'cut'},
-            {role: 'copy'},
-            {role: 'paste'},
-            {role: 'pasteandmatchstyle'},
-            {role: 'delete'},
-            {role: 'selectall'}
-          ]
-        },
-        {
-          label: 'View',
-          submenu: [
-            {role: 'reload'},
-            {role: 'forcereload'},
-            {role: 'toggledevtools'},
-            {type: 'separator'},
-            {role: 'resetzoom'},
-            {role: 'zoomin'},
-            {role: 'zoomout'},
-            {type: 'separator'},
-            {role: 'togglefullscreen'}
-          ]
-        },
-        {
-          role: 'window',
-          submenu: [
-            {role: 'minimize'},
-            {role: 'close'}
-          ]
-        },
-        {
-          role: 'help',
-          submenu: [
+          const template = [
             {
-              label: 'Learn More',
-              click () { require('electron').shell.openExternal('https://electronjs.org') }
+              label: 'File',
+              submenu: [
+                {label: 'Open', click: clickOpen, accelerator:'CommandOrControl+O'},
+                {type: 'separator'},
+                {label: 'Save', click: clickSave, accelerator:'CommandOrControl+S' },
+              ]
+            },
+            {
+              label: 'Edit',
+              submenu: [
+                {role: 'undo'},
+                {role: 'redo'},
+                {type: 'separator'},
+                {role: 'cut'},
+                {role: 'copy'},
+                {role: 'paste'},
+                {role: 'pasteandmatchstyle'},
+                {role: 'delete'},
+                {role: 'selectall'}
+              ]
+            },
+            {
+              label: 'View',
+              submenu: [
+                {role: 'reload'},
+                {role: 'forcereload'},
+                {role: 'toggledevtools'},
+                {type: 'separator'},
+                {role: 'resetzoom'},
+                {role: 'zoomin'},
+                {role: 'zoomout'},
+                {type: 'separator'},
+                {role: 'togglefullscreen'}
+              ]
+            },
+            {
+              role: 'window',
+              submenu: [
+                {role: 'minimize'},
+                {role: 'close'}
+              ]
+            },
+            {
+              role: 'help',
+              submenu: [
+                {
+                  label: 'Learn More',
+                  click () { require('electron').shell.openExternal('https://electronjs.org') }
+                }
+              ]
             }
           ]
-        }
-      ]
 
-      if (process.platform === 'darwin') {
-        template.unshift({
-          label: app.getName(),
-          submenu: [
-            {role: 'about'},
-            {type: 'separator'},
-            {role: 'services', submenu: []},
-            {type: 'separator'},
-            {role: 'hide'},
-            {role: 'hideothers'},
-            {role: 'unhide'},
-            {type: 'separator'},
-            {role: 'quit'}
-          ]
-        })
+          if (process.platform === 'darwin') {
+            template.unshift({
+              label: app.getName(),
+              submenu: [
+                {role: 'about'},
+                {type: 'separator'},
+                {role: 'services', submenu: []},
+                {type: 'separator'},
+                {role: 'hide'},
+                {role: 'hideothers'},
+                {role: 'unhide'},
+                {type: 'separator'},
+                {role: 'quit'}
+              ]
+            })
 
-        // Edit menu
-        template[2].submenu.push(
-          {type: 'separator'},
-          {
-            label: 'Speech',
-            submenu: [
-              {role: 'startspeaking'},
-              {role: 'stopspeaking'}
+            // Edit menu
+            template[2].submenu.push(
+              {type: 'separator'},
+              {
+                label: 'Speech',
+                submenu: [
+                  {role: 'startspeaking'},
+                  {role: 'stopspeaking'}
+                ]
+              }
+            )
+
+            // Window menu
+            template[4].submenu = [
+              {role: 'close'},
+              {role: 'minimize'},
+              {role: 'zoom'},
+              {type: 'separator'},
+              {role: 'front'}
             ]
           }
-        )
 
-        // Window menu
-        template[4].submenu = [
-          {role: 'close'},
-          {role: 'minimize'},
-          {role: 'zoom'},
-          {type: 'separator'},
-          {role: 'front'}
-        ]
-      }
+          const menu = Menu.buildFromTemplate(template)
+          Menu.setApplicationMenu(menu)
+      """))
+    Blink.handlers(w)["save"] = save_dialog
+    Blink.handlers(w)["open"] = open_dialog
 
-      const menu = Menu.buildFromTemplate(template)
-      Menu.setApplicationMenu(menu)
-  """))
-Blink.handlers(w)["save"] = save_dialog
-Blink.handlers(w)["open"] = open_dialog
+    end
+end
+
+LiveIDE.new_window()
