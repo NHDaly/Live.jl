@@ -138,6 +138,9 @@ function editorchange(editortext)
 end
 Blink.handlers(w)["editorchange"] = editorchange
 
+function evalnode(FunctionModule, node, firstline, latestline, outputlines)
+    evalblock(FunctionModule, Expr(:block, node), firstline, latestline, outputlines)
+end
 function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines;
                     toplevel=false, keepgoing=false)
     # These are for implementing Live.@test lines, since they're a non-standard
@@ -146,6 +149,7 @@ function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines
     test_next_function = false
     test_context = nothing
     for node in blocknode.args
+        global gnode = node
         try
             if isa(node, LineNumberNode)
                 latestline = node.line
@@ -165,6 +169,15 @@ function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines
                     error("""syntax: "struct" expression not at top level""")
                 end
                 handle_struct(FunctionModule, node, firstline, latestline, outputlines)
+            elseif test_next_function == true && (
+                     isa(node, Expr) && node.head == :function# ||
+                     #(node.head == :(=) && isa(node.args[1], Expr) && node.args[1].head == :call)
+                     )
+                test_next_function = false
+                livetest_function(FunctionModule,
+                                if toplevel latestline else firstline end,
+                                if toplevel 1 else latestline end,
+                                node, test_context, outputlines)
             else
                 out = Core.eval(FunctionModule, node)
                 # Handle special-cases for evaluated output
@@ -173,15 +186,13 @@ function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines
                     #  within the specified Test Context.
                     test_next_function = true
                     test_context = out.args
-                elseif test_next_function && isa(out, Function)
-                    test_next_function = false
-                    livetest_block(FunctionModule,
-                                    if toplevel latestline else firstline end,
-                                    node, test_context, outputlines, fname=repr(out))
+                    # TODO: what to output on Live.@test lines? *Maybe* the context itself?
+                else
+                    setOutputText(outputlines, firstline + latestline-1, repr(out))
                 end
-                setOutputText(outputlines, firstline + latestline-1, repr(out))
             end
         catch er
+            showerror(stdout, er, catch_backtrace(), backtrace=true)
             setOutputText(outputlines, firstline+latestline-1, sprint(showerror, er))
             if !keepgoing
                 rethrow(er)
@@ -207,7 +218,7 @@ function handle_for_loop(FunctionModule, node, firstline, latestline, outputline
             loopoutputs = DefaultDict{Int,String}("")
             Core.eval(FunctionModule, :($itervariable = $(Expr(:quote, temp[1]))))
             try
-                latestline = evalblock(FunctionModule, body, firstline, latestline, loopoutputs)
+                latestline = evalnode(FunctionModule, body, firstline, latestline, loopoutputs)
             catch e
                 push!(iteration_outputs, loopoutputs)
                 display_loop_lines(outputlines, iteration_outputs)
@@ -233,14 +244,15 @@ function handle_while_loop(FunctionModule, node, firstline, outputlines)
     body = node.args[2]
     iteration_outputs = []
     latestline = 1
+    # TODO: Add a manual depth-check so we don't freeze the program with a while true end.
     while Core.eval(FunctionModule, test)
         loopoutputs = DefaultDict{Int,String}("")
         try
-            latestline = evalblock(FunctionModule, body, firstline, latestline, loopoutputs)
+            latestline = evalnode(FunctionModule, body, firstline, latestline, loopoutputs)
         catch e
             push!(iteration_outputs, loopoutputs)
             display_loop_lines(outputlines, iteration_outputs)
-            throw(e)
+            rethrow(e)
         end
         push!(iteration_outputs, loopoutputs)
     end
@@ -267,11 +279,11 @@ function handle_if(FunctionModule, node, firstline, offsetline, outputlines)
     testval = Core.eval(FunctionModule, test)
     #setOutputText(outputlines, firstline, repr(testval))
     if testval
-        evalblock(FunctionModule, trueblock, firstline, offsetline, outputlines)
+        evalnode(FunctionModule, trueblock, firstline, offsetline, outputlines)
     elseif restblock != nothing && restblock.head == :elseif
         handle_if(FunctionModule, restblock, firstline, offsetline, outputlines)
     else
-        evalblock(FunctionModule, restblock, firstline, offsetline, outputlines)
+        evalnode(FunctionModule, restblock, firstline, offsetline, outputlines)
     end
 end
 
@@ -332,21 +344,31 @@ end
 
 # ------------------------------------------------------------------------------
 
-function livetest_block(ScopeModule, firstline, node, test_context, outputlines; fname = nothing)
+function livetest_function(ScopeModule, firstline, latestline, node, test_context, outputlines)
+    global fnode = node
+    fname = String(fnode.args[1].args[1])
+    fargs = fnode.args[1].args[2:end]
+    body = fnode.args[2]
+
+    # Display the function signature
+    fsig = "$ScopeModule.$(fnode.args[1])"
+    setOutputText(outputlines, firstline+latestline-1, fsig)
+
     # Everything evaluated here should be within this new module.
     TestContextModule = deepcopy(ScopeModule)
     # First, eval the context
-    for e in test_context
-        Core.eval(TestContextModule, e)
+    for expr in test_context
+        Core.eval(TestContextModule, expr)
     end
-    global fnode = node
-    global body = fnode.args[2]
+
     try
-        evalblock(TestContextModule, body, firstline, 1, outputlines)
+        # TODO: it would be nice to *indent* the output inside a block.
+        evalnode(TestContextModule, body, firstline, latestline, outputlines)
+
+        # Finally, eval the function so it's defined for the rest of the code
+        Core.eval(ScopeModule, node)
     catch er
-        setOutputText(outputlines, firstline,
-                (fname != nothing ? fname*": " : "") *
-                    sprint(showerror, er))
+        setOutputText(outputlines, firstline+latestline-1, "$fname: "* sprint(showerror, er))
         return
     end
 end
