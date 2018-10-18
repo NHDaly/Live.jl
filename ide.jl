@@ -101,8 +101,8 @@ module Live
   end
 end
 
-testline_requested(_) = false
-testline_requested(_::Live.TestLine) = true
+is_function_testline_request(_) = false
+is_function_testline_request(_::Live.TestLine) = true
 
 text = ""
 function editorchange(editortext)
@@ -115,21 +115,15 @@ function editorchange(editortext)
         global text, parsed
         text = editortext
         parsed = parseall(editortext)
-        lastline = 1
+        latestline = 1
         test_next_function = false
         test_context = nothing
-        nextfunction = nothing
-        run_at_next_linenode = false
         for node in parsed.args
             if isa(node, LineNumberNode)
-                lastline = node.line
-                if run_at_next_linenode
-                    testfunction(nextfunction..., lastline, test_context, outputlines)
-                    run_at_next_linenode = false
-                end
+                latestline = node.line
             end
             try
-                # TODO: use evalnode here
+                # TODO: use evalblock here
                 #if isa(node, Expr) && node.head == :function
                 #end
                 out = Core.eval(UserCode, node)
@@ -143,21 +137,19 @@ function editorchange(editortext)
                     dumpedOutput = Core.eval(UserCode, quote
                         sprint(io->dump(io, $parametric ? $structName.body : $structName))
                     end)
-                    setOutputText(outputlines, lastline, dumpedOutput)
+                    setOutputText(outputlines, latestline, dumpedOutput)
                 end
                 if test_next_function && isa(out, Function)
-                    nextfunction = (lastline, node, out)
                     test_next_function = false
-                    run_at_next_linenode = true
-                end
-                if testline_requested(out)
+                    livetest_block(latestline, node, test_context, outputlines, fname=repr(out))
+                elseif is_function_testline_request(out)
                     test_next_function =  true
                     test_context = out.args
                 elseif out != nothing
-                    setOutputText(outputlines, lastline, repr(out))
+                    setOutputText(outputlines, latestline, repr(out))
                 end
             catch e
-                setOutputText(outputlines, lastline, string(e))
+                setOutputText(outputlines, latestline, string(e))
             end
         end
         # -- UPDATE OUTPUT AT END OF THE LOOP --
@@ -178,6 +170,7 @@ function editorchange(editortext)
 end
 Blink.handlers(w)["editorchange"] = editorchange
 
+# Note: this is a shallow copy! (Only imports the _names_ -- shares refs)
 function import_names_into(destmodule, srcmodule)
     fullsrcname = join(fullname(srcmodule), ".")
     for n in names(srcmodule, all=true)
@@ -186,7 +179,7 @@ function import_names_into(destmodule, srcmodule)
         end
     end
 end
-function testfunction(firstline, node, f, lastline, test_context, outputlines)
+function livetest_block(firstline, node, test_context, outputlines; fname = nothing)
     # Everything evaluated here should be within this new module.
     FunctionModule = Module(:(FunctionModule))
     import_names_into(FunctionModule, UserCode)
@@ -194,18 +187,17 @@ function testfunction(firstline, node, f, lastline, test_context, outputlines)
     for e in test_context
         Core.eval(FunctionModule, e)
     end
-    #println("$firstline, $node, $f, $lastline")
     global fnode = node
     global body = fnode.args[2]
     try
         evalblock(FunctionModule, body, firstline, 1, outputlines)
-    catch e
-        println("testfunction ERROR: $e")
-        setOutputText(outputlines, firstline+lastline-1, repr(e))
+    catch er
+        setOutputText(outputlines, firstline,
+                (fname != nothing ? fname*": " : "") *
+                    sprint(showerror, er))
         return
     end
 end
-
 
 
 # --- FILE API ---
@@ -348,7 +340,7 @@ Blink.handlers(w)["save"] = save_dialog
 Blink.handlers(w)["open"] = open_dialog
 
 # Weird code stuff
-function handle_for_loop(FunctionModule, node, firstline, lastline, outputlines)
+function handle_for_loop(FunctionModule, node, firstline, latestline, outputlines)
     global fornode = node
     iterspec_node = node.args[1]
     body = node.args[2]
@@ -363,7 +355,7 @@ function handle_for_loop(FunctionModule, node, firstline, lastline, outputlines)
             loopoutputs = DefaultDict{Int,String}("")
             Core.eval(FunctionModule, :($itervariable = $(Expr(:quote, temp[1]))))
             try
-                lastline = evalblock(FunctionModule, body, firstline, lastline, loopoutputs)
+                latestline = evalblock(FunctionModule, body, firstline, latestline, loopoutputs)
             catch e
                 push!(iteration_outputs, loopoutputs)
                 display_loop_lines(outputlines, iteration_outputs)
@@ -375,7 +367,7 @@ function handle_for_loop(FunctionModule, node, firstline, lastline, outputlines)
         display_loop_lines(outputlines, iteration_outputs)
     catch e
         # TODO: Simplify this error handling by having a global line counter & _maybe_ even a global outputlines.
-        setOutputText(outputlines, firstline+lastline-1, repr(e))
+        setOutputText(outputlines, firstline+latestline-1, repr(e))
         # TODO: Re-evaluate this decision.. maybe there's no reason to rethrow here at all!
         #   Maybe it's _cool_ that it keeps evaluating as best it can! Something to consider.
         #   Also, removing these would be easier, i think.
@@ -388,11 +380,11 @@ function handle_while_loop(FunctionModule, node, firstline, outputlines)
     test = node.args[1]
     body = node.args[2]
     iteration_outputs = []
-    lastline = 1
+    latestline = 1
     while Core.eval(FunctionModule, test)
         loopoutputs = DefaultDict{Int,String}("")
         try
-            lastline = evalblock(FunctionModule, body, firstline, lastline, loopoutputs)
+            latestline = evalblock(FunctionModule, body, firstline, latestline, loopoutputs)
         catch e
             push!(iteration_outputs, loopoutputs)
             display_loop_lines(outputlines, iteration_outputs)
@@ -415,36 +407,73 @@ function display_loop_lines(outputlines, iteration_outputs)
     end
 end
 
-function evalnode(FunctionModule, node, firstline, lastline, outputlines)
+function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines)
     try
-        if isa(node, LineNumberNode)
-            return node.line
+        # Use a while-loop so that the special @Live.test macro can eat two nodes.
+        num_nodes = length(blocknode.args)
+        while i < num_nodes
+            node = blocknode.args[i]
+            global gnode = node
+
+            if isa(node, LineNumberNode)
+                latestline = node.line
+                continue;
+            end
+            # Handle special-cases for parsed structure
+            if isa(node, Expr) && node.head == :block
+                evalblock(FunctionModule, node, firstline, latestline, outputlines)
+            elseif isa(node, Expr) && node.head == :while
+                handle_while_loop(FunctionModule, node, firstline, outputlines)
+            elseif isa(node, Expr) && node.head == :for
+                handle_for_loop(FunctionModule, node, firstline, latestline, outputlines)
+            elseif isa(node, Expr) && node.head == :if
+                handle_if(FunctionModule, node, firstline, latestline, outputlines)
+            else
+                out = Core.eval(FunctionModule, node)
+                # Handle special-cases for evaluated output
+                if is_function_testline_request(out)
+                    # For @Live.test lines, live-test the next node within the
+                    # specified Test Context.
+                    if i < num_nodes-1
+                        i += 1
+                        node = blocknode.args[i]
+                        livetest_block(latestline, node, test_context, outputlines, fname=repr(out))
+                    end
+                end
+                setOutputText(outputlines, firstline + latestline-1, repr(out))
+            end
+            global pnode = node
+            i += 1
         end
-        # Handle special-cases
-        if isa(node, Expr) && node.head == :block
-            evalblock(FunctionModule, node, firstline, lastline, outputlines)
-        elseif isa(node, Expr) && node.head == :while
-            handle_while_loop(FunctionModule, node, firstline, outputlines)
-        elseif isa(node, Expr) && node.head == :for
-            handle_for_loop(FunctionModule, node, firstline, lastline, outputlines)
-        elseif isa(node, Expr) && node.head == :if
-            handle_if(FunctionModule, node, firstline, lastline, outputlines)
-        else
-            out = Core.eval(FunctionModule, node)
-            setOutputText(outputlines, firstline + lastline-1, repr(out))
-        end
-    catch e
-        setOutputText(outputlines, firstline+lastline-1, repr(e))
-        throw(e)
+        return latestline
+    catch er
+        setOutputText(outputlines, firstline+latestline-1, sprint(showerror, er))
+        rethrow(er)  # TODO: _Do_ we want to bubble this error?
     end
 end
-function evalblock(FunctionModule, blocknode, firstline, lastline, outputlines)
-    for node in blocknode.args
-        global gnode = node
-        lastline = evalnode(FunctionModule, node, firstline, lastline, outputlines)
-        global pnode = node
+
+function handle_livetestline(ScopeModule, testline::Live.TestLine,
+                             firstline, latestline, node, outputlines;
+                             fname=nothing)
+    test_context = testline.args
+
+    # Everything evaluated here should be within this new module.
+    TestContextModule = Module(:(TestContextModule))
+    import_names_into(TestContextModule, ScopeModule)
+    # First, eval the context
+    for e in test_context
+        Core.eval(TestContextModule, e)
     end
-    return lastline
+    global fnode = node
+    global body = fnode.args[2]
+    try
+        evalblock(FunctionModule, body, firstline, 1, outputlines)
+    catch er
+        setOutputText(outputlines, firstline,
+                (fname != nothing ? fname*": " : "") *
+                    sprint(showerror, er))
+        return
+    end
 end
 
 function handle_if(FunctionModule, node, firstline, offsetline, outputlines)
@@ -455,10 +484,10 @@ function handle_if(FunctionModule, node, firstline, offsetline, outputlines)
     testval = Core.eval(FunctionModule, test)
     #setOutputText(outputlines, firstline, repr(testval))
     if testval
-        evalnode(FunctionModule, trueblock, firstline, offsetline, outputlines)
+        evalblock(FunctionModule, trueblock, firstline, offsetline, outputlines)
     elseif restblock != nothing && restblock.head == :elseif
         handle_if(FunctionModule, restblock, firstline, offsetline, outputlines)
     else
-        evalnode(FunctionModule, restblock, firstline, offsetline, outputlines)
+        evalblock(FunctionModule, restblock, firstline, offsetline, outputlines)
     end
 end
