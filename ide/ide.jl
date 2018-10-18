@@ -1,6 +1,8 @@
 using Blink
 using DataStructures: DefaultDict
 
+using Live # Define the Live macro for use in the IDE
+
 include("parsefile.jl")
 
 cd(@__DIR__)
@@ -89,18 +91,6 @@ function setOutputText(linesdict, line, text)
 end
 
 
-# Handle more interactivity for users
-module Live
-  struct TestLine
-      args
-      lineNode::LineNumberNode
-  end
-
-  macro test(args...)
-      TestLine(args, __source__)
-  end
-end
-
 is_function_testline_request(_) = false
 is_function_testline_request(_::Live.TestLine) = true
 
@@ -118,6 +108,8 @@ function editorchange(editortext)
         text = editortext
         parsed = parseall(editortext)
         try
+            # TODO: ooh, we should also probably swipe stdout so that it also
+            # writes to the app. Perhaps in a different type of output div.
             evalblock(UserCode, parsed, 1, 1, outputlines; toplevel=true, keepgoing=true)
         catch end
 
