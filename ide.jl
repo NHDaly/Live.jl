@@ -108,19 +108,20 @@ text = ""
 function editorchange(editortext)
     try  # So errors don't crash my Blink window...
         # Everything evaluated is within this new module each iteration.
-        global UserCode = Module(:UserCode)
+        # TODO: change this to :Main once the Live module is in a real package!
+        global UserCode = Module(:LiveMain)
+        setparent!(UserCode, UserCode)
 
         outputlines = DefaultDict{Int,String}("")
 
         global text, parsed
         text = editortext
         parsed = parseall(editortext)
-        test_next_function = false
-        test_context = nothing
         try
             evalblock(UserCode, parsed, 1, 1, outputlines; toplevel=true, keepgoing=true)
         catch end
-        # -- UPDATE OUTPUT AT END OF THE LOOP --
+
+        # -- Display output in js window after everything is done --
         maximum_or_default(itr, default) = isempty(itr) ? default : maximum(itr)
 
         # Must use @js_ since no return value required. (@js hangs)
@@ -132,12 +133,165 @@ function editorchange(editortext)
         @js_ w outputarea.setValue($outputText)
     catch err
         println("ERROR: $err")
-        rethrow(err)
     end
     nothing
 end
 Blink.handlers(w)["editorchange"] = editorchange
 
+function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines;
+                    toplevel=false, keepgoing=false)
+    # These are for implementing Live.@test lines, since they're a non-standard
+    # macro (since they affect the "next" line, which a macro isn't really
+    # supposed to do.)
+    test_next_function = false
+    test_context = nothing
+    for node in blocknode.args
+        try
+            if isa(node, LineNumberNode)
+                latestline = node.line
+                continue;
+            end
+            # Handle special-cases for parsed structure
+            if isa(node, Expr) && node.head == :block
+                evalblock(FunctionModule, node, firstline, latestline, outputlines)
+            elseif isa(node, Expr) && node.head == :while
+                handle_while_loop(FunctionModule, node, firstline, outputlines)
+            elseif isa(node, Expr) && node.head == :for
+                handle_for_loop(FunctionModule, node, firstline, latestline, outputlines)
+            elseif isa(node, Expr) && node.head == :if
+                handle_if(FunctionModule, node, firstline, latestline, outputlines)
+            elseif isa(node, Expr) && node.head == :struct
+                if toplevel != true
+                    error("""syntax: "struct" expression not at top level""")
+                end
+                handle_struct(FunctionModule, node, firstline, latestline, outputlines)
+            else
+                out = Core.eval(FunctionModule, node)
+                # Handle special-cases for evaluated output
+                if is_function_testline_request(out)
+                    # For @Live.test lines, live-test the next function
+                    #  within the specified Test Context.
+                    test_next_function = true
+                    test_context = out.args
+                elseif test_next_function && isa(out, Function)
+                    test_next_function = false
+                    livetest_block(FunctionModule,
+                                    if toplevel latestline else firstline end,
+                                    node, test_context, outputlines, fname=repr(out))
+                end
+                setOutputText(outputlines, firstline + latestline-1, repr(out))
+            end
+        catch er
+            setOutputText(outputlines, firstline+latestline-1, sprint(showerror, er))
+            if !keepgoing
+                rethrow(er)
+            end
+        end
+    end
+    return latestline
+end
+
+# Weird code stuff
+function handle_for_loop(FunctionModule, node, firstline, latestline, outputlines)
+    global fornode = node
+    iterspec_node = node.args[1]
+    body = node.args[2]
+    # Modify the iteration specification variable's name to a temp.
+    itervariable = iterspec_node.args[1]
+    # Start interpreting the for-loop
+    try
+        iterspec = Core.eval(FunctionModule, iterspec_node.args[2])  # just the range itself
+        temp = Base.iterate(iterspec)
+        iteration_outputs = []
+        while temp != nothing
+            loopoutputs = DefaultDict{Int,String}("")
+            Core.eval(FunctionModule, :($itervariable = $(Expr(:quote, temp[1]))))
+            try
+                latestline = evalblock(FunctionModule, body, firstline, latestline, loopoutputs)
+            catch e
+                push!(iteration_outputs, loopoutputs)
+                display_loop_lines(outputlines, iteration_outputs)
+                throw(e)
+            end
+            push!(iteration_outputs, loopoutputs)
+            temp = Base.iterate(iterspec, temp[2])
+        end
+        display_loop_lines(outputlines, iteration_outputs)
+    catch e
+        # TODO: Simplify this error handling by having a global line counter & _maybe_ even a global outputlines.
+        setOutputText(outputlines, firstline+latestline-1, sprint(showerror, er))
+        # TODO: Re-evaluate this decision.. maybe there's no reason to rethrow here at all!
+        #   Maybe it's _cool_ that it keeps evaluating as best it can! Something to consider.
+        #   Also, removing these would be easier, i think.
+        #   Oooh, the coolest thing would be like, to make the rest of the output red or something!
+        rethrow(e)
+    end
+end
+function handle_while_loop(FunctionModule, node, firstline, outputlines)
+    global whilenode = node
+    test = node.args[1]
+    body = node.args[2]
+    iteration_outputs = []
+    latestline = 1
+    while Core.eval(FunctionModule, test)
+        loopoutputs = DefaultDict{Int,String}("")
+        try
+            latestline = evalblock(FunctionModule, body, firstline, latestline, loopoutputs)
+        catch e
+            push!(iteration_outputs, loopoutputs)
+            display_loop_lines(outputlines, iteration_outputs)
+            throw(e)
+        end
+        push!(iteration_outputs, loopoutputs)
+    end
+    display_loop_lines(outputlines, iteration_outputs)
+end
+function display_loop_lines(outputlines, iteration_outputs)
+    # For now, just append each iteration's outputs on the line.
+    lineouts = DefaultDict{Int, Array{String}}(()->[])
+    for outputs in iteration_outputs
+        for (l, s) in outputs
+            push!(lineouts[l], s)
+        end
+    end
+    for (line, outs) in lineouts
+        setOutputText(outputlines, line, join(outs, ", "))
+    end
+end
+
+function handle_if(FunctionModule, node, firstline, offsetline, outputlines)
+    global ifnode = node
+    test = node.args[1]
+    trueblock = node.args[2]
+    restblock = if (length(node.args) > 2) node.args[3] else nothing end
+    testval = Core.eval(FunctionModule, test)
+    #setOutputText(outputlines, firstline, repr(testval))
+    if testval
+        evalblock(FunctionModule, trueblock, firstline, offsetline, outputlines)
+    elseif restblock != nothing && restblock.head == :elseif
+        handle_if(FunctionModule, restblock, firstline, offsetline, outputlines)
+    else
+        evalblock(FunctionModule, restblock, firstline, offsetline, outputlines)
+    end
+end
+
+function handle_struct(FunctionModule, node, firstline, offsetline, outputlines)
+    # Eval the struct
+    out = Core.eval(FunctionModule, node)
+    # Assuming struct definition has no output (like usual),
+    # let's make the output be: `dump(StructName)`
+    # (handle parametric types)
+    if out == nothing
+        parametric = node.args[2] isa Expr
+        structName = (parametric ? node.args[2].args[1] : node.args[2])
+        dumpedOutput = Core.eval(UserCode, quote
+            sprint(io->dump(io, $parametric ? $structName.body : $structName))
+        end)
+        setOutputText(outputlines, firstline+offsetline-1, dumpedOutput)
+    else
+        setOutputText(outputlines, firstline+offsetline-1, repr(out))
+    end
+end
 
 # ------------ MODULES: Custom implementation of deepcopy(m::Module) ---------------------------
 import Base: deepcopy
@@ -198,6 +352,7 @@ function livetest_block(ScopeModule, firstline, node, test_context, outputlines;
 end
 
 
+
 # --- FILE API ---
 # Set up dialog
 js(w, Blink.JSString(""" dialog = nodeRequire('electron').remote.dialog; """))
@@ -222,7 +377,7 @@ function save_dialog(selectedfile, contents)
 end
 
 
-# Create menus
+# Javascript: Create app menus
 
 js(w, Blink.JSString("""
     const {app, Menu} = nodeRequire('electron').remote
@@ -336,158 +491,3 @@ js(w, Blink.JSString("""
   """))
 Blink.handlers(w)["save"] = save_dialog
 Blink.handlers(w)["open"] = open_dialog
-
-# Weird code stuff
-function handle_for_loop(FunctionModule, node, firstline, latestline, outputlines)
-    global fornode = node
-    iterspec_node = node.args[1]
-    body = node.args[2]
-    # Modify the iteration specification variable's name to a temp.
-    itervariable = iterspec_node.args[1]
-    # Start interpreting the for-loop
-    try
-        iterspec = Core.eval(FunctionModule, iterspec_node.args[2])  # just the range itself
-        temp = Base.iterate(iterspec)
-        iteration_outputs = []
-        while temp != nothing
-            loopoutputs = DefaultDict{Int,String}("")
-            Core.eval(FunctionModule, :($itervariable = $(Expr(:quote, temp[1]))))
-            try
-                latestline = evalblock(FunctionModule, body, firstline, latestline, loopoutputs)
-            catch e
-                push!(iteration_outputs, loopoutputs)
-                display_loop_lines(outputlines, iteration_outputs)
-                throw(e)
-            end
-            push!(iteration_outputs, loopoutputs)
-            temp = Base.iterate(iterspec, temp[2])
-        end
-        display_loop_lines(outputlines, iteration_outputs)
-    catch e
-        # TODO: Simplify this error handling by having a global line counter & _maybe_ even a global outputlines.
-        setOutputText(outputlines, firstline+latestline-1, repr(e))
-        # TODO: Re-evaluate this decision.. maybe there's no reason to rethrow here at all!
-        #   Maybe it's _cool_ that it keeps evaluating as best it can! Something to consider.
-        #   Also, removing these would be easier, i think.
-        #   Oooh, the coolest thing would be like, to make the rest of the output red or something!
-        throw(e)
-    end
-end
-function handle_while_loop(FunctionModule, node, firstline, outputlines)
-    global whilenode = node
-    test = node.args[1]
-    body = node.args[2]
-    iteration_outputs = []
-    latestline = 1
-    while Core.eval(FunctionModule, test)
-        loopoutputs = DefaultDict{Int,String}("")
-        try
-            latestline = evalblock(FunctionModule, body, firstline, latestline, loopoutputs)
-        catch e
-            push!(iteration_outputs, loopoutputs)
-            display_loop_lines(outputlines, iteration_outputs)
-            throw(e)
-        end
-        push!(iteration_outputs, loopoutputs)
-    end
-    display_loop_lines(outputlines, iteration_outputs)
-end
-function display_loop_lines(outputlines, iteration_outputs)
-    # For now, just append each iteration's outputs on the line.
-    lineouts = DefaultDict{Int, Array{String}}(()->[])
-    for outputs in iteration_outputs
-        for (l, s) in outputs
-            push!(lineouts[l], s)
-        end
-    end
-    for (line, outs) in lineouts
-        setOutputText(outputlines, line, join(outs, ", "))
-    end
-end
-
-function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines;
-                    toplevel=false, keepgoing=false)
-    test_next_function = false
-    test_context = nothing
-    for node in blocknode.args
-        global gnode = node
-
-        try
-            if isa(node, LineNumberNode)
-                latestline = node.line
-                continue;
-            end
-            # Handle special-cases for parsed structure
-            if isa(node, Expr) && node.head == :block
-                evalblock(FunctionModule, node, firstline, latestline, outputlines)
-            elseif isa(node, Expr) && node.head == :while
-                handle_while_loop(FunctionModule, node, firstline, outputlines)
-            elseif isa(node, Expr) && node.head == :for
-                handle_for_loop(FunctionModule, node, firstline, latestline, outputlines)
-            elseif isa(node, Expr) && node.head == :if
-                handle_if(FunctionModule, node, firstline, latestline, outputlines)
-            elseif isa(node, Expr) && node.head == :struct
-                if toplevel != true
-                    error("""syntax: "struct" expression not at top level""")
-                end
-
-                out = Core.eval(FunctionModule, node)
-                # Assuming struct definition has no output (like usual),
-                # let's make the output be: `dump(StructName)`
-                # (handle parametric types)
-                if out == nothing
-                    parametric = node.args[2] isa Expr
-                    structName = (parametric ? node.args[2].args[1] : node.args[2])
-                    dumpedOutput = Core.eval(UserCode, quote
-                        sprint(io->dump(io, $parametric ? $structName.body : $structName))
-                    end)
-                    setOutputText(outputlines, latestline, dumpedOutput)
-                else
-                    setOutputText(outputlines, latestline, repr(out))
-                end
-            else
-                out = Core.eval(FunctionModule, node)
-                # Handle special-cases for evaluated output
-                if is_function_testline_request(out)
-                    # For @Live.test lines, live-test the next function
-                    #  within the specified Test Context.
-                    test_next_function = true
-                    test_context = out.args
-                elseif test_next_function && isa(out, Function)
-                    test_next_function = false
-                    @show firstline, latestline
-                    livetest_block(FunctionModule,
-                                    if toplevel latestline else firstline end,
-                                    node, test_context, outputlines, fname=repr(out))
-                end
-                setOutputText(outputlines, firstline + latestline-1, repr(out))
-            end
-            global pnode = node
-        catch er
-            println("CAUGHT: $er")
-            showerror(stderr, er, catch_backtrace(); backtrace=true)
-            global ernode = gnode
-            setOutputText(outputlines, firstline+latestline-1, sprint(showerror, er))
-            if !keepgoing
-                rethrow(e)
-            end
-        end
-    end
-    return latestline
-end
-
-function handle_if(FunctionModule, node, firstline, offsetline, outputlines)
-    global ifnode = node
-    test = node.args[1]
-    trueblock = node.args[2]
-    restblock = if (length(node.args) > 2) node.args[3] else nothing end
-    testval = Core.eval(FunctionModule, test)
-    #setOutputText(outputlines, firstline, repr(testval))
-    if testval
-        evalblock(FunctionModule, trueblock, firstline, offsetline, outputlines)
-    elseif restblock != nothing && restblock.head == :elseif
-        handle_if(FunctionModule, restblock, firstline, offsetline, outputlines)
-    else
-        evalblock(FunctionModule, restblock, firstline, offsetline, outputlines)
-    end
-end
