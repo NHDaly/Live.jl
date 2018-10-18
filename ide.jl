@@ -141,7 +141,7 @@ function editorchange(editortext)
                 end
                 if test_next_function && isa(out, Function)
                     test_next_function = false
-                    livetest_block(latestline, node, test_context, outputlines, fname=repr(out))
+                    livetest_block(UserCode, latestline, node, test_context, outputlines, fname=repr(out))
                 elseif is_function_testline_request(out)
                     test_next_function =  true
                     test_context = out.args
@@ -170,27 +170,57 @@ function editorchange(editortext)
 end
 Blink.handlers(w)["editorchange"] = editorchange
 
+
+# ------------ MODULES: Custom implementation of deepcopy(m::Module) ---------------------------
+import Base: deepcopy
+function deepcopy(m::Module)
+    global sourceModule=m
+    m2 = Module(nameof(m), true)
+    import_names_into(m2, m)
+    setparent!(m2, parentmodule(m))
+    return m2
+end
+
 # Note: this is a shallow copy! (Only imports the _names_ -- shares refs)
 function import_names_into(destmodule, srcmodule)
-    fullsrcname = join(fullname(srcmodule), ".")
-    for n in names(srcmodule, all=true)
-        if !(n in [Symbol("#eval"), Symbol("#include"), :eval, :include])
-            Core.eval(destmodule, :($n = Main.$(nameof(srcmodule)).$n))
+    fullsrcname = Meta.parse(join(fullname(srcmodule), "."))
+    for n in names(srcmodule, all=true, imported=true)
+        if n != nameof(destmodule)  # don't copy itself into itself
+            Core.eval(destmodule, :($n = $(Core.eval(srcmodule, n))))
         end
     end
+    for m in usings(srcmodule)
+        Core.eval(destmodule, :($(nameof(m)) = $(Core.eval(srcmodule, m))))
+    end
 end
-function livetest_block(firstline, node, test_context, outputlines; fname = nothing)
+
+usings(m::Module) =
+    ccall(:jl_module_usings, Array{Module,1}, (Any,), m)
+
+# EWWWWWWWW, this is super hacky. There's no way (that i can find) to set the parent
+# of a module, so here we're depending on the structure of the jl_module_t struct
+# to allow writing a new parent over it.
+setparent!(m::Module, p::Module) =
+    unsafe_store!(Ptr{_Module2}(pointer_from_objref(m)),
+                   _Module2(nameof(m), p), 1)
+struct _Module2
+    name
+    parent
+end
+
+# ------------------------------------------------------------------------------
+
+function livetest_block(ScopeModule, firstline, node, test_context, outputlines; fname = nothing)
     # Everything evaluated here should be within this new module.
-    FunctionModule = Module(:(FunctionModule))
-    import_names_into(FunctionModule, UserCode)
+    TestContextModule = deepcopy(ScopeModule)
     # First, eval the context
     for e in test_context
-        Core.eval(FunctionModule, e)
+        Core.eval(TestContextModule, e)
     end
     global fnode = node
     global body = fnode.args[2]
     try
-        evalblock(FunctionModule, body, firstline, 1, outputlines)
+        evalblock(TestContextModule, body, firstline, 1, outputlines)
     catch er
         setOutputText(outputlines, firstline,
                 (fname != nothing ? fname*": " : "") *
@@ -408,11 +438,10 @@ function display_loop_lines(outputlines, iteration_outputs)
 end
 
 function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines)
+    test_next_function = false
+    test_context = nothing
     try
-        # Use a while-loop so that the special @Live.test macro can eat two nodes.
-        num_nodes = length(blocknode.args)
-        while i < num_nodes
-            node = blocknode.args[i]
+        for node in blocknode.args
             global gnode = node
 
             if isa(node, LineNumberNode)
@@ -432,47 +461,25 @@ function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines
                 out = Core.eval(FunctionModule, node)
                 # Handle special-cases for evaluated output
                 if is_function_testline_request(out)
-                    # For @Live.test lines, live-test the next node within the
-                    # specified Test Context.
-                    if i < num_nodes-1
-                        i += 1
-                        node = blocknode.args[i]
-                        livetest_block(latestline, node, test_context, outputlines, fname=repr(out))
-                    end
+                    # For @Live.test lines, live-test the next function
+                    #  within the specified Test Context.
+                    test_next_function = true
+                    test_context = out.args
+                elseif test_next_function && isa(out, Function)
+                    test_next_function = false
+                    livetest_block(FunctionModule, latestline, node, test_context, outputlines, fname=repr(out))
                 end
                 setOutputText(outputlines, firstline + latestline-1, repr(out))
             end
             global pnode = node
-            i += 1
         end
         return latestline
     catch er
+        println("CAUGHT: $er")
+        showerror(stderr, er, catch_backtrace(); backtrace=true)
+        global ernode = gnode
         setOutputText(outputlines, firstline+latestline-1, sprint(showerror, er))
         rethrow(er)  # TODO: _Do_ we want to bubble this error?
-    end
-end
-
-function handle_livetestline(ScopeModule, testline::Live.TestLine,
-                             firstline, latestline, node, outputlines;
-                             fname=nothing)
-    test_context = testline.args
-
-    # Everything evaluated here should be within this new module.
-    TestContextModule = Module(:(TestContextModule))
-    import_names_into(TestContextModule, ScopeModule)
-    # First, eval the context
-    for e in test_context
-        Core.eval(TestContextModule, e)
-    end
-    global fnode = node
-    global body = fnode.args[2]
-    try
-        evalblock(FunctionModule, body, firstline, 1, outputlines)
-    catch er
-        setOutputText(outputlines, firstline,
-                (fname != nothing ? fname*": " : "") *
-                    sprint(showerror, er))
-        return
     end
 end
 
