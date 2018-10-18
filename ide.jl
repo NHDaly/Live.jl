@@ -115,43 +115,11 @@ function editorchange(editortext)
         global text, parsed
         text = editortext
         parsed = parseall(editortext)
-        latestline = 1
         test_next_function = false
         test_context = nothing
-        for node in parsed.args
-            if isa(node, LineNumberNode)
-                latestline = node.line
-            end
-            try
-                # TODO: use evalblock here
-                #if isa(node, Expr) && node.head == :function
-                #end
-                out = Core.eval(UserCode, node)
-                if isa(node, Expr) && node.head == :struct && out == nothing
-                    println("struct: $node")
-                    # Assuming struct definition has no output (like usual),
-                    # let's make the output be: `dump(StructName)`
-                    # (handle parametric types)
-                    parametric = node.args[2] isa Expr
-                    structName = (parametric ? node.args[2].args[1] : node.args[2])
-                    dumpedOutput = Core.eval(UserCode, quote
-                        sprint(io->dump(io, $parametric ? $structName.body : $structName))
-                    end)
-                    setOutputText(outputlines, latestline, dumpedOutput)
-                end
-                if test_next_function && isa(out, Function)
-                    test_next_function = false
-                    livetest_block(UserCode, latestline, node, test_context, outputlines, fname=repr(out))
-                elseif is_function_testline_request(out)
-                    test_next_function =  true
-                    test_context = out.args
-                elseif out != nothing
-                    setOutputText(outputlines, latestline, repr(out))
-                end
-            catch e
-                setOutputText(outputlines, latestline, string(e))
-            end
-        end
+        try
+            evalblock(UserCode, parsed, 1, 1, outputlines; toplevel=true, keepgoing=true)
+        catch end
         # -- UPDATE OUTPUT AT END OF THE LOOP --
         maximum_or_default(itr, default) = isempty(itr) ? default : maximum(itr)
 
@@ -437,13 +405,14 @@ function display_loop_lines(outputlines, iteration_outputs)
     end
 end
 
-function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines)
+function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines;
+                    toplevel=false, keepgoing=false)
     test_next_function = false
     test_context = nothing
-    try
-        for node in blocknode.args
-            global gnode = node
+    for node in blocknode.args
+        global gnode = node
 
+        try
             if isa(node, LineNumberNode)
                 latestline = node.line
                 continue;
@@ -457,6 +426,25 @@ function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines
                 handle_for_loop(FunctionModule, node, firstline, latestline, outputlines)
             elseif isa(node, Expr) && node.head == :if
                 handle_if(FunctionModule, node, firstline, latestline, outputlines)
+            elseif isa(node, Expr) && node.head == :struct
+                if toplevel != true
+                    error("""syntax: "struct" expression not at top level""")
+                end
+
+                out = Core.eval(FunctionModule, node)
+                # Assuming struct definition has no output (like usual),
+                # let's make the output be: `dump(StructName)`
+                # (handle parametric types)
+                if out == nothing
+                    parametric = node.args[2] isa Expr
+                    structName = (parametric ? node.args[2].args[1] : node.args[2])
+                    dumpedOutput = Core.eval(UserCode, quote
+                        sprint(io->dump(io, $parametric ? $structName.body : $structName))
+                    end)
+                    setOutputText(outputlines, latestline, dumpedOutput)
+                else
+                    setOutputText(outputlines, latestline, repr(out))
+                end
             else
                 out = Core.eval(FunctionModule, node)
                 # Handle special-cases for evaluated output
@@ -467,20 +455,25 @@ function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines
                     test_context = out.args
                 elseif test_next_function && isa(out, Function)
                     test_next_function = false
-                    livetest_block(FunctionModule, latestline, node, test_context, outputlines, fname=repr(out))
+                    @show firstline, latestline
+                    livetest_block(FunctionModule,
+                                    if toplevel latestline else firstline end,
+                                    node, test_context, outputlines, fname=repr(out))
                 end
                 setOutputText(outputlines, firstline + latestline-1, repr(out))
             end
             global pnode = node
+        catch er
+            println("CAUGHT: $er")
+            showerror(stderr, er, catch_backtrace(); backtrace=true)
+            global ernode = gnode
+            setOutputText(outputlines, firstline+latestline-1, sprint(showerror, er))
+            if !keepgoing
+                rethrow(e)
+            end
         end
-        return latestline
-    catch er
-        println("CAUGHT: $er")
-        showerror(stderr, er, catch_backtrace(); backtrace=true)
-        global ernode = gnode
-        setOutputText(outputlines, firstline+latestline-1, sprint(showerror, er))
-        rethrow(er)  # TODO: _Do_ we want to bubble this error?
     end
+    return latestline
 end
 
 function handle_if(FunctionModule, node, firstline, offsetline, outputlines)
