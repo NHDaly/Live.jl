@@ -1,3 +1,11 @@
+using Live
+
+# Test with this string (Bootstrapped testing! Using parseall to test parseall! XD)
+Live.@test str="""
+    if true 5 else 6 end
+    x=1; y=2
+  """
+
 # https://stackoverflow.com/a/46366560/751061
 # modified from the julia source ./test/parse.jl
 function parseall(str)

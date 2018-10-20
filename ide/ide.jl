@@ -27,7 +27,7 @@ function new_window()
          set_up_app_menu(bg_window)
     end
     w = Window(async=false)
-    update_window_filename(w, "Untitled")
+    title(w, "untitled")
     #tools(w)
 
     # Set up to allow loading modules
@@ -387,11 +387,6 @@ function livetest_function(ScopeModule, firstline, latestline, node, test_contex
     end
 end
 
-function update_window_filename(w, newname)
-    title(w, newname)
-    @js_ w globalFilename = $newname
-end
-
 function set_up_app_menu(w)
     # Set handlers to be called from javascript
     Blink.handlers(w)["new"] = (_)->new_window()
@@ -412,6 +407,10 @@ function set_up_app_menu(w)
             let focusedWindow = BrowserWindow.getFocusedWindow();
             focusedWindow.webContents.send('file-save');
         }
+        function clickSaveAs(menuItem, browserWindow, event) {
+            let focusedWindow = BrowserWindow.getFocusedWindow();
+            focusedWindow.webContents.send('file-save-as');
+        }
 
         const template = [
           {
@@ -421,6 +420,7 @@ function set_up_app_menu(w)
               {label: 'Open', click: clickOpen, accelerator:'CommandOrControl+O'},
               {type: 'separator'},
               {label: 'Save', click: clickSave, accelerator:'CommandOrControl+S' },
+              {label: 'Save As...', click: clickSaveAs, accelerator:'CommandOrControl+Shift+S' },
             ]
           },
           {
@@ -521,17 +521,17 @@ function set_up_window_menu(w)
         end
         contents = read(selectedfiles[1], String)
         @js_ w texteditor.setValue($contents)
-        update_window_filename(w, basename(selectedfiles[1]))
+        title(w, basename(selectedfiles[1]))
     end
 
     save_file(args::Array) = save_file(args...)  # js sends args as an array
     function save_file(selectedfile, contents)
         println(selectedfile)
-        update_window_filename(w, basename(selectedfile))
         if selectedfile == nothing || selectedfile == ""
             return
         end
         write(selectedfile, contents)
+        title(w, basename(selectedfile))
     end
 
     # Set handlers to be called from javascript
@@ -544,18 +544,33 @@ function set_up_window_menu(w)
         const {dialog} = nodeRequire('electron').remote
         const {ipcRenderer} = nodeRequire('electron')
 
+        globalFilepath = ""
+
         function handle_open() {
-            selectedfiles = dialog.showOpenDialog({properties: ['openFile']});
+            var selectedfiles = dialog.showOpenDialog({properties: ['openFile']});
             console.log(selectedfiles);
             if (selectedfiles !== undefined) {
                 Blink.msg("open", selectedfiles);
+                globalFilepath = selectedfiles[0];
             }
         }
         function handle_save() {
-            selectedfile = dialog.showSaveDialog({defaultPath: globalFilename});
+            if (globalFilepath === undefined || globalFilepath == "") {
+                handle_save_as();
+            } else {
+                Blink.msg("save", [globalFilepath, texteditor.getValue()]);
+            }
+        }
+        function handle_save_as() {
+            if (globalFilepath === undefined) {
+                var selectedfile = dialog.showSaveDialog();
+            } else {
+                var selectedfile = dialog.showSaveDialog({defaultPath: globalFilepath});
+            }
             console.log(selectedfile);
             if (selectedfile !== undefined) {
                 Blink.msg("save", [selectedfile, texteditor.getValue()]);
+                globalFilepath = selectedfile;
             }
         }
 
@@ -565,6 +580,9 @@ function set_up_window_menu(w)
         })
         ipcRenderer.on('file-save', (event, message) => {
             handle_save();
+        })
+        ipcRenderer.on('file-save-as', (event, message) => {
+            handle_save_as();
         })
         console.log(ipcRenderer);
     """))
