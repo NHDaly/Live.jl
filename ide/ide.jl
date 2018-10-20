@@ -178,6 +178,8 @@ function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines
                 handle_for_loop(FunctionModule, node, firstline, latestline, outputlines)
             elseif isa(node, Expr) && node.head == :if
                 handle_if(FunctionModule, node, firstline, latestline, outputlines)
+            elseif isa(node, Expr) && node.head == :module
+                handle_module(FunctionModule, node, firstline, latestline, outputlines)
             elseif isa(node, Expr) && node.head == :struct
                 if toplevel != true
                     error("""syntax: "struct" expression not at top level""")
@@ -299,6 +301,17 @@ function handle_if(FunctionModule, node, firstline, offsetline, outputlines)
     else
         evalnode(FunctionModule, restblock, firstline, offsetline, outputlines)
     end
+end
+
+function handle_module(FunctionModule, node, firstline, offsetline, outputlines)
+    global modulenode = node
+    module_name = node.args[2]
+    NewModule = Module(module_name, true)
+    setparent!(NewModule, FunctionModule)
+    restblock = node.args[3]
+    evalnode(NewModule, restblock, firstline, offsetline, outputlines)
+    # Now add the created module into FunctionModule:
+    Core.eval(FunctionModule, :($module_name = $NewModule))
 end
 
 function handle_struct(FunctionModule, node, firstline, offsetline, outputlines)
@@ -547,7 +560,8 @@ function set_up_window_menu(w)
         globalFilepath = ""
 
         function handle_open() {
-            var selectedfiles = dialog.showOpenDialog({properties: ['openFile']});
+            var selectedfiles = dialog.showOpenDialog({properties: ['openFile'],
+                                                       defaultPath: globalFilepath});
             console.log(selectedfiles);
             if (selectedfiles !== undefined) {
                 Blink.msg("open", selectedfiles);
@@ -555,18 +569,14 @@ function set_up_window_menu(w)
             }
         }
         function handle_save() {
-            if (globalFilepath === undefined || globalFilepath == "") {
+            if (globalFilepath == "") {
                 handle_save_as();
             } else {
                 Blink.msg("save", [globalFilepath, texteditor.getValue()]);
             }
         }
         function handle_save_as() {
-            if (globalFilepath === undefined) {
-                var selectedfile = dialog.showSaveDialog();
-            } else {
-                var selectedfile = dialog.showSaveDialog({defaultPath: globalFilepath});
-            }
+            var selectedfile = dialog.showSaveDialog({defaultPath: globalFilepath});
             console.log(selectedfile);
             if (selectedfile !== undefined) {
                 Blink.msg("save", [selectedfile, texteditor.getValue()]);
