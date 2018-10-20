@@ -9,8 +9,25 @@ include("parsefile.jl")
 
 cd(@__DIR__)
 
+global bg_window = nothing
 function new_window()
+    global bg_window
+    if bg_window == nothing
+        bg_window = Window(Dict(:show=>false), async=false)
+
+        js(bg_window, Blink.JSString("""
+            window.nodeRequire = require;
+            window.nodeExports = window.exports;
+            window.nodeModule = window.module;
+            delete window.require;
+            delete window.exports;
+            delete window.module;
+         """))
+
+         set_up_app_menu(bg_window)
+    end
     w = Window(async=false)
+    update_window_filename(w, "Untitled")
     #tools(w)
 
     # Set up to allow loading modules
@@ -22,6 +39,8 @@ function new_window()
         delete window.exports;
         delete window.module;
      """))
+
+    set_up_window_menu(w)
 
     load!(w, "frameworks/jquery-3.3.1.js", async=true)
 
@@ -85,8 +104,6 @@ function new_window()
                  console.log("sent msg to julia!");))
 
     Blink.handlers(w)["editorchange"] = (txt)->editorchange(w,txt)
-
-    set_up_menubar(w)
 end
 
 # User code parsing + eval
@@ -370,147 +387,188 @@ function livetest_function(ScopeModule, firstline, latestline, node, test_contex
     end
 end
 
+function update_window_filename(w, newname)
+    title(w, newname)
+    @js_ w globalFilename = $newname
+end
 
-function set_up_menubar(w)
+function set_up_app_menu(w)
+    # Set handlers to be called from javascript
+    Blink.handlers(w)["new"] = (_)->new_window()
+
+    # Javascript: Create app menus
+    js(w, Blink.JSString("""
+        const {app, Menu, BrowserWindow, dialog, ipcMain} = nodeRequire('electron').remote
+
+        function clickNew(menuItem, browserWindow, event) {
+            console.log("clickNew");
+            Blink.msg("new", []);
+        }
+        function clickOpen(menuItem, browserWindow, event) {
+            let focusedWindow = BrowserWindow.getFocusedWindow();
+            focusedWindow.webContents.send('file-open');
+        }
+        function clickSave(menuItem, browserWindow, event) {
+            let focusedWindow = BrowserWindow.getFocusedWindow();
+            focusedWindow.webContents.send('file-save');
+        }
+
+        const template = [
+          {
+            label: 'File',
+            submenu: [
+              {label: 'New', click: clickNew, accelerator:'CommandOrControl+N'},
+              {label: 'Open', click: clickOpen, accelerator:'CommandOrControl+O'},
+              {type: 'separator'},
+              {label: 'Save', click: clickSave, accelerator:'CommandOrControl+S' },
+            ]
+          },
+          {
+            label: 'Edit',
+            submenu: [
+              {role: 'undo'},
+              {role: 'redo'},
+              {type: 'separator'},
+              {role: 'cut'},
+              {role: 'copy'},
+              {role: 'paste'},
+              {role: 'pasteandmatchstyle'},
+              {role: 'delete'},
+              {role: 'selectall'}
+            ]
+          },
+          {
+            label: 'View',
+            submenu: [
+              {role: 'reload'},
+              {role: 'forcereload'},
+              {role: 'toggledevtools'},
+              {type: 'separator'},
+              {role: 'resetzoom'},
+              {role: 'zoomin'},
+              {role: 'zoomout'},
+              {type: 'separator'},
+              {role: 'togglefullscreen'}
+            ]
+          },
+          {
+            role: 'window',
+            submenu: [
+              {role: 'minimize'},
+              {role: 'close'}
+            ]
+          },
+          {
+            role: 'help',
+            submenu: [
+              {
+                label: 'Learn More',
+                click () { require('electron').shell.openExternal('https://electronjs.org') }
+              }
+            ]
+          }
+        ]
+
+        if (process.platform === 'darwin') {
+          template.unshift({
+            label: app.getName(),
+            submenu: [
+              {role: 'about'},
+              {type: 'separator'},
+              {role: 'services', submenu: []},
+              {type: 'separator'},
+              {role: 'hide'},
+              {role: 'hideothers'},
+              {role: 'unhide'},
+              {type: 'separator'},
+              {role: 'quit'}
+            ]
+          })
+          // Edit menu
+          template[2].submenu.push(
+            {type: 'separator'},
+            {
+              label: 'Speech',
+              submenu: [
+                {role: 'startspeaking'},
+                {role: 'stopspeaking'}
+              ]
+            }
+          )
+
+          // Window menu
+          template[4].submenu = [
+            {role: 'close'},
+            {role: 'minimize'},
+            {role: 'zoom'},
+            {type: 'separator'},
+            {role: 'front'}
+          ]
+        }
+
+        const menu = Menu.buildFromTemplate(template)
+        Menu.setApplicationMenu(menu)
+    """))
+end
+
+function set_up_window_menu(w)
     # --- FILE API ---
     # Set up dialog
-    js(w, Blink.JSString(""" dialog = nodeRequire('electron').remote.dialog; """))
-    function open_dialog(selectedfiles)
-        println(selectedfiles)
+    function open_file(selectedfiles)
+        println("open_file: $selectedfiles")
         if selectedfiles == nothing || isempty(selectedfiles) || selectedfiles[1] == ""
             return
         end
         contents = read(selectedfiles[1], String)
-        println(contents)
         @js_ w texteditor.setValue($contents)
+        update_window_filename(w, basename(selectedfiles[1]))
     end
 
-    save_dialog(args::Array) = save_dialog(args...)
-    function save_dialog(selectedfile, contents)
+    save_file(args::Array) = save_file(args...)  # js sends args as an array
+    function save_file(selectedfile, contents)
         println(selectedfile)
+        update_window_filename(w, basename(selectedfile))
         if selectedfile == nothing || selectedfile == ""
             return
         end
         write(selectedfile, contents)
-        println(contents)
     end
 
+    # Set handlers to be called from javascript
+    Blink.handlers(w)["open"] = open_file
+    Blink.handlers(w)["save"] = save_file
 
-    # Javascript: Create app menus
+    # Javascript: Handle save and open dialog messages
     js(w, Blink.JSString("""
-        const {app, Menu} = nodeRequire('electron').remote
+        // I don't really understand the difference between these...
+        const {dialog} = nodeRequire('electron').remote
+        const {ipcRenderer} = nodeRequire('electron')
 
-        function clickOpen(menuItem, browserWindow, event) {
+        function handle_open() {
             selectedfiles = dialog.showOpenDialog({properties: ['openFile']});
-            console.log(selectedfiles)
-            Blink.msg("open", selectedfiles);
-        }
-        function clickSave(menuItem, browserWindow, event) {
-            selectedfile = dialog.showSaveDialog({});
-            console.log(selectedfile)
-            Blink.msg("save", [selectedfile, texteditor.getValue()]);
-        }
-
-          const template = [
-            {
-              label: 'File',
-              submenu: [
-                {label: 'Open', click: clickOpen, accelerator:'CommandOrControl+O'},
-                {type: 'separator'},
-                {label: 'Save', click: clickSave, accelerator:'CommandOrControl+S' },
-              ]
-            },
-            {
-              label: 'Edit',
-              submenu: [
-                {role: 'undo'},
-                {role: 'redo'},
-                {type: 'separator'},
-                {role: 'cut'},
-                {role: 'copy'},
-                {role: 'paste'},
-                {role: 'pasteandmatchstyle'},
-                {role: 'delete'},
-                {role: 'selectall'}
-              ]
-            },
-            {
-              label: 'View',
-              submenu: [
-                {role: 'reload'},
-                {role: 'forcereload'},
-                {role: 'toggledevtools'},
-                {type: 'separator'},
-                {role: 'resetzoom'},
-                {role: 'zoomin'},
-                {role: 'zoomout'},
-                {type: 'separator'},
-                {role: 'togglefullscreen'}
-              ]
-            },
-            {
-              role: 'window',
-              submenu: [
-                {role: 'minimize'},
-                {role: 'close'}
-              ]
-            },
-            {
-              role: 'help',
-              submenu: [
-                {
-                  label: 'Learn More',
-                  click () { require('electron').shell.openExternal('https://electronjs.org') }
-                }
-              ]
+            console.log(selectedfiles);
+            if (selectedfiles !== undefined) {
+                Blink.msg("open", selectedfiles);
             }
-          ]
+        }
+        function handle_save() {
+            selectedfile = dialog.showSaveDialog({defaultPath: globalFilename});
+            console.log(selectedfile);
+            if (selectedfile !== undefined) {
+                Blink.msg("save", [selectedfile, texteditor.getValue()]);
+            }
+        }
 
-          if (process.platform === 'darwin') {
-            template.unshift({
-              label: app.getName(),
-              submenu: [
-                {role: 'about'},
-                {type: 'separator'},
-                {role: 'services', submenu: []},
-                {type: 'separator'},
-                {role: 'hide'},
-                {role: 'hideothers'},
-                {role: 'unhide'},
-                {type: 'separator'},
-                {role: 'quit'}
-              ]
-            })
-
-            // Edit menu
-            template[2].submenu.push(
-              {type: 'separator'},
-              {
-                label: 'Speech',
-                submenu: [
-                  {role: 'startspeaking'},
-                  {role: 'stopspeaking'}
-                ]
-              }
-            )
-
-            // Window menu
-            template[4].submenu = [
-              {role: 'close'},
-              {role: 'minimize'},
-              {role: 'zoom'},
-              {type: 'separator'},
-              {role: 'front'}
-            ]
-          }
-
-          const menu = Menu.buildFromTemplate(template)
-          Menu.setApplicationMenu(menu)
-      """))
-    Blink.handlers(w)["save"] = save_dialog
-    Blink.handlers(w)["open"] = open_dialog
-
-    end
+        // Set up handlers from the main process to handle Menu events:
+        ipcRenderer.on('file-open', (event, message) => {
+            handle_open();
+        })
+        ipcRenderer.on('file-save', (event, message) => {
+            handle_save();
+        })
+        console.log(ipcRenderer);
+    """))
+end
 end
 
 LiveIDE.new_window()
