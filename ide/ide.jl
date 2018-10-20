@@ -56,7 +56,7 @@ function new_window()
        <tbody>
         <tr>
          <td>
-           <textarea id="text-editor">function myScript()\n   return 100\nend\n</textarea>
+           <textarea id="text-editor"></textarea>
          </td>
          <td>
            <textarea id="output-area">output</textarea>
