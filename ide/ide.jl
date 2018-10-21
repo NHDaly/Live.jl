@@ -364,11 +364,8 @@ function handle_live_test_file(FunctionModule, firstline, latestline, testfile, 
         scriptmode_enabled = prev_scriptmode
     end
 end
-struct TestFunctionCalledArgs
-    args
-end
 function create_test_context_from_file(file, functionname, fargs)
-    @show file
+    #@show file
     testfile_block = parseall(read(file, String))
     testfile_block == nothing && return nothing
     TestFileModule = Module(:TestFile, true)
@@ -382,7 +379,6 @@ function create_test_context_from_file(file, functionname, fargs)
         nodeiter = Iterators.Stateful(testfile_block.args);
         while !isempty(nodeiter)
             node = popfirst!(nodeiter)
-            @show node
             if isa(node, Expr) && node.head == :macrocall
                 if node.args[1] == LIVE_SCRIPT_TRIGGER ||
                     node.args[1] == LIVE_TESTFILE_TRIGGER
@@ -395,10 +391,9 @@ function create_test_context_from_file(file, functionname, fargs)
                         not_linenumber(maybelinenumbernode) = !(maybelinenumbernode isa LineNumberNode)
                         _, testnode = pop_next_matching_node(not_linenumber, nodeiter, 1)
                         if testnode == nothing
-                            println("SKIPPING NODE")
+                            #println("SKIPPING NODE")
                             continue
                         end
-                        @show testnode
                         # Copy the module and override its definition of the function
                         TestModuleCopy = deepcopy(TestFileModule)
                         args_channel = Channel(1)
@@ -408,13 +403,13 @@ function create_test_context_from_file(file, functionname, fargs)
                         @async try
                             Core.eval(TestModuleCopy, testnode)
                         catch e
-                            @show e
+                            #@show e
                         finally
                             put!(args_channel, nothing)
                         end
                         # Wait until the args are passed!
                         testargs = take!(args_channel)
-                        @show testargs
+                        #@show testargs
                         if (testargs == nothing)
                             return nothing
                         end
@@ -426,7 +421,6 @@ function create_test_context_from_file(file, functionname, fargs)
             end
         end
     catch e
-        @show e
         #showerror(stdout, e, catch_backtrace(), backtrace=true)
     finally
         cd(cwd)
