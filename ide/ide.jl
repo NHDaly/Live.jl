@@ -181,11 +181,58 @@ const LIVE_TEST_TRIGGER = :(Live.@test).args[1]
 const LIVE_SCRIPT_TRIGGER = :(Live.@script).args[1]
 
 function evalnode(FunctionModule, node, firstline, latestline, outputlines;
-                    toplevel=false)
-    if !(node isa Expr && node.head == :block)
-        evalblock(FunctionModule, Expr(:block, node), firstline, latestline, outputlines; toplevel=toplevel)
-    else
-        evalblock(FunctionModule, node, firstline, latestline, outputlines; toplevel=toplevel)
+                    toplevel=false, keepgoing=false, blocknode_iter=nothing)
+    global gnode = node
+    global scriptmode_enabled
+    try
+        if isa(node, LineNumberNode)
+            return node.line
+        end
+        # Handle the Live api:
+        if isa(node, Expr) && node.head == :macrocall
+            if node.args[1] == LIVE_SCRIPT_TRIGGER
+                scriptmode_settings = Core.eval(FunctionModule, node)::Live.ScriptLine
+                scriptmode_enabled = scriptmode_settings.enabled
+                setOutputText(outputlines, firstline + latestline-1, "Script Mode: $(scriptmode_enabled)")
+                return latestline
+            elseif node.args[1] == LIVE_TEST_TRIGGER
+                testline = Core.eval(FunctionModule, node)::Live.TestLine
+                # For @Live.test lines, live-test the next function
+                #  within the specified Test Context.
+                return handle_live_test_line(FunctionModule, firstline, latestline, testline, blocknode_iter, outputlines, toplevel, keepgoing)
+            end
+        end
+        if !scriptmode_enabled
+            return latestline
+        end
+
+        # Handle special-cases for parsed structure
+        if isa(node, Expr) && node.head == :block
+            latestline = evalblock(FunctionModule, node, firstline, latestline, outputlines)
+        elseif isa(node, Expr) && node.head == :while
+            handle_while_loop(FunctionModule, node, firstline, outputlines)
+        elseif isa(node, Expr) && node.head == :for
+            handle_for_loop(FunctionModule, node, firstline, latestline, outputlines)
+        elseif isa(node, Expr) && node.head == :if
+            handle_if(FunctionModule, node, firstline, latestline, outputlines)
+        elseif isa(node, Expr) && node.head == :module
+            handle_module(FunctionModule, node, firstline, latestline, outputlines)
+        elseif isa(node, Expr) && node.head == :struct
+            if toplevel != true
+                showerror(stdout, "NATHAN", backtrace(), backtrace=true)
+                error("""syntax: "struct" expression not at top level""")
+            end
+            handle_struct(FunctionModule, node, firstline, latestline, outputlines)
+        else
+            out = Core.eval(FunctionModule, node)
+            setOutputText(outputlines, firstline + latestline-1, repr(out))
+        end
+    catch er
+        #showerror(stdout, er, catch_backtrace(), backtrace=true)
+        setOutputText(outputlines, firstline+latestline-1, sprint(showerror, er))
+        if !keepgoing
+            rethrow(er)
+        end
     end
 end
 function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines;
@@ -195,36 +242,31 @@ function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines
     # These are for implementing Live.@test lines, since they're a non-standard
     # macro (since they affect the "next" line, which a macro isn't really
     # supposed to do.)
-    test_next_function = false
-    test_context = nothing
-    for node in blocknode.args
-        global gnode = node
-        try
-            if isa(node, LineNumberNode)
-                latestline = node.line
-                continue;
-            end
-            # Handle the Live api:
-            if isa(node, Expr) && node.head == :macrocall
-                if node.args[1] == LIVE_SCRIPT_TRIGGER
-                    scriptmode_settings = Core.eval(FunctionModule, node)::Live.ScriptLine
-                    scriptmode_enabled = scriptmode_settings.enabled
-                    setOutputText(outputlines, firstline + latestline-1, "Script Mode: $(scriptmode_enabled)")
-                    continue
-                elseif node.args[1] == LIVE_TEST_TRIGGER
-                    testline = Core.eval(FunctionModule, node)::Live.TestLine
-                    # For @Live.test lines, live-test the next function
-                    #  within the specified Test Context.
-                    test_next_function = true
-                    test_context = testline.args
-                    # TODO: what to output on Live.@test lines? *Maybe* the context itself?
-                    continue
-                end
-            elseif test_next_function == true && (
-                     isa(node, Expr) && node.head == :function# ||
-                     #(node.head == :(=) && isa(node.args[1], Expr) && node.args[1].head == :call)
-                     )
-                test_next_function = false
+    nodeiter = Iterators.Stateful(blocknode.args);
+    while !isempty(nodeiter)
+        node = popfirst!(nodeiter)
+        # Note that
+        latestline = evalnode(FunctionModule, node, firstline, latestline,
+                              outputlines; toplevel=toplevel, keepgoing=keepgoing,
+                              blocknode_iter=nodeiter)
+    end
+    return latestline
+end
+
+# ------------------------------------------------------------------------------
+# Live testing functions
+
+function handle_live_test_line(FunctionModule, firstline, latestline, testline, blocknode_iter, outputlines, toplevel, keepgoing)
+    global scriptmode_enabled
+    test_context = testline.args
+    if blocknode_iter != nothing
+        # TODO: Should this consume nodes until we find a function, or just do nothing if the next node isn't a function?
+        # Consume nodes until we find a function, and then test it.
+        while !isempty(blocknode_iter)
+            node = popfirst!(blocknode_iter)
+            if (isa(node, Expr) && node.head == :function# ||
+                #(node.head == :(=) && isa(node.args[1], Expr) && node.args[1].head == :call)
+                )
                 # Always enable script mode while executing a Live.@test function
                 prev_scriptmode = scriptmode_enabled
                 scriptmode_enabled = true
@@ -233,48 +275,20 @@ function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines
                                   if toplevel 1 else latestline end,
                                   node, test_context, outputlines)
                 scriptmode_enabled = prev_scriptmode
-                continue
-            end
-
-            if !scriptmode_enabled
-                continue
-            end
-
-            # Handle special-cases for parsed structure
-            if isa(node, Expr) && node.head == :block
-                evalblock(FunctionModule, node, firstline, latestline, outputlines)
-            elseif isa(node, Expr) && node.head == :while
-                handle_while_loop(FunctionModule, node, firstline, outputlines)
-            elseif isa(node, Expr) && node.head == :for
-                handle_for_loop(FunctionModule, node, firstline, latestline, outputlines)
-            elseif isa(node, Expr) && node.head == :if
-                handle_if(FunctionModule, node, firstline, latestline, outputlines)
-            elseif isa(node, Expr) && node.head == :module
-                handle_module(FunctionModule, node, firstline, latestline, outputlines)
-            elseif isa(node, Expr) && node.head == :struct
-                if toplevel != true
-                    showerror(stdout, "NATHAN", backtrace(), backtrace=true)
-                    error("""syntax: "struct" expression not at top level""")
-                end
-                handle_struct(FunctionModule, node, firstline, latestline, outputlines)
+                return latestline
+            elseif isa(node, LineNumberNode)
+                latestline = node.line
             else
-                out = Core.eval(FunctionModule, node)
-                setOutputText(outputlines, firstline + latestline-1, repr(out))
-            end
-        catch er
-            #showerror(stdout, er, catch_backtrace(), backtrace=true)
-            setOutputText(outputlines, firstline+latestline-1, sprint(showerror, er))
-            if !keepgoing
-                rethrow(er)
+                # Next node wasn't a function. Give up on this.
+                setOutputText(outputlines, firstline+latestline-1, "ERROR: Live.@test must precede a function definition.")
+                return latestline
+                #latestline = evalnode(FunctionModule, node, firstline, latestline,
+                #                      outputlines; toplevel=toplevel, keepgoing=keepgoing,
+                #                      blocknode_iter=blocknode_iter)
             end
         end
     end
-    return latestline
 end
-
-# ------------------------------------------------------------------------------
-# Live testing functions
-
 function livetest_function(ScopeModule, firstline, latestline, node, test_context, outputlines)
     global fnode = node
     fname = String(fnode.args[1].args[1])
