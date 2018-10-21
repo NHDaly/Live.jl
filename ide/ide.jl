@@ -12,6 +12,8 @@ cd(@__DIR__)
 
 global bg_window = nothing
 function new_window()
+    cd(@__DIR__)  # Need to do this every time to make sure the resources exist.
+
     global bg_window
     if bg_window == nothing
         bg_window = Window(Dict(:show=>false), async=false)
@@ -100,13 +102,17 @@ function new_window()
 
     global outputText = @js w outputarea.getValue()
 
+    # (globalFilepath is set when saving/loading files. Passing it allows cd() before executing.)
     @js w texteditor.on("update",
-        (cm) -> (Blink.msg("editorchange", cm.getValue());
+        (cm) -> (Blink.msg("editorchange", [cm.getValue(), globalFilepath]);
                  console.log("sent msg to julia!");))
 
-    Blink.handlers(w)["editorchange"] = (txt)->editorchange(w,txt)
+    Blink.handle(w, "editorchange") do (txt, filepath)
+        editorchange(w, filepath, txt)
+    end
+    #Blink.handlers(w)["editorchange"] = (args...)->editorchange(w, args...)
     # Do an initial run.
-    @js w Blink.msg("editorchange", texteditor.getValue());
+    @js w Blink.msg("editorchange", [texteditor.getValue(), globalFilepath]);
 end
 
 # User code parsing + eval
@@ -122,7 +128,7 @@ end
 is_function_testline_request(_) = false
 is_function_testline_request(_::Live.TestLine) = true
 
-function editorchange(w, editortext)
+function editorchange(w, globalFilepath, editortext)
     #try  # So errors don't crash my Blink window...
         # Everything evaluated is within this new module each iteration.
         # TODO: change this to :Main once the Live module is in a real package!
@@ -132,6 +138,11 @@ function editorchange(w, editortext)
 
         # Automatically import Live to allow users to enable/disable Live mode:
         Core.eval(UserCode, :(import Live))
+
+        # TODO: eventually each window should probably have its own julia process
+        if !isempty(globalFilepath)
+            cd(dirname(globalFilepath))  # Execute the code starting from the right file
+        end
 
         outputlines = DefaultDict{Int,String}("")
 
@@ -164,11 +175,18 @@ end
 const LIVE_TEST_TRIGGER = :(Live.@test).args[1]
 const LIVE_SCRIPT_TRIGGER = :(Live.@script).args[1]
 
-function evalnode(FunctionModule, node, firstline, latestline, outputlines)
-    evalblock(FunctionModule, Expr(:block, node), firstline, latestline, outputlines)
+function evalnode(FunctionModule, node, firstline, latestline, outputlines;
+                    toplevel=false)
+    if !(node isa Expr && node.head == :block)
+        evalblock(FunctionModule, Expr(:block, node), firstline, latestline, outputlines; toplevel=toplevel)
+    else
+        evalblock(FunctionModule, node, firstline, latestline, outputlines; toplevel=toplevel)
+    end
 end
 function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines;
                     toplevel=false, keepgoing=false)
+    # Track whether Live.@script() is enabled
+    global scriptmode_enabled
     # These are for implementing Live.@test lines, since they're a non-standard
     # macro (since they affect the "next" line, which a macro isn't really
     # supposed to do.)
@@ -185,7 +203,9 @@ function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines
             if isa(node, Expr) && node.head == :macrocall
                 if node.args[1] == LIVE_SCRIPT_TRIGGER
                     scriptmode_settings = Core.eval(FunctionModule, node)::Live.ScriptLine
-                    global scriptmode_enabled = scriptmode_settings.enabled
+                    scriptmode_enabled = scriptmode_settings.enabled
+                    setOutputText(outputlines, firstline + latestline-1, "Script Mode: $(scriptmode_enabled)")
+                    continue
                 elseif node.args[1] == LIVE_TEST_TRIGGER
                     testline = Core.eval(FunctionModule, node)::Live.TestLine
                     # For @Live.test lines, live-test the next function
@@ -193,18 +213,22 @@ function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines
                     test_next_function = true
                     test_context = testline.args
                     # TODO: what to output on Live.@test lines? *Maybe* the context itself?
+                    continue
                 end
             elseif test_next_function == true && (
                      isa(node, Expr) && node.head == :function# ||
                      #(node.head == :(=) && isa(node.args[1], Expr) && node.args[1].head == :call)
                      )
                 test_next_function = false
+                # Always enable script mode while executing a Live.@test function
+                prev_scriptmode = scriptmode_enabled
                 scriptmode_enabled = true
                 livetest_function(FunctionModule,
                                   if toplevel latestline else firstline end,
                                   if toplevel 1 else latestline end,
                                   node, test_context, outputlines)
-                scriptmode_enabled = false
+                scriptmode_enabled = prev_scriptmode
+                continue
             end
 
             if !scriptmode_enabled
@@ -224,6 +248,7 @@ function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines
                 handle_module(FunctionModule, node, firstline, latestline, outputlines)
             elseif isa(node, Expr) && node.head == :struct
                 if toplevel != true
+                    showerror(stdout, "NATHAN", backtrace(), backtrace=true)
                     error("""syntax: "struct" expression not at top level""")
                 end
                 handle_struct(FunctionModule, node, firstline, latestline, outputlines)
@@ -232,7 +257,7 @@ function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines
                 setOutputText(outputlines, firstline + latestline-1, repr(out))
             end
         catch er
-            showerror(stdout, er, catch_backtrace(), backtrace=true)
+            #showerror(stdout, er, catch_backtrace(), backtrace=true)
             setOutputText(outputlines, firstline+latestline-1, sprint(showerror, er))
             if !keepgoing
                 rethrow(er)
@@ -333,12 +358,14 @@ function handle_module(FunctionModule, node, firstline, offsetline, outputlines)
     NewModule = Module(module_name, true)
     setparent!(NewModule, FunctionModule)
     restblock = node.args[3]
-    evalnode(NewModule, restblock, firstline, offsetline, outputlines)
+    evalnode(NewModule, restblock, offsetline, 1, outputlines; toplevel=true)
+    #setOutputText(outputlines, firstline+offsetline-1, string(module_name))
     # Now add the created module into FunctionModule:
     Core.eval(FunctionModule, :($module_name = $NewModule))
 end
 
 function handle_struct(FunctionModule, node, firstline, offsetline, outputlines)
+    global structnode = node
     # Eval the struct
     out = Core.eval(FunctionModule, node)
     # Assuming struct definition has no output (like usual),
@@ -347,7 +374,7 @@ function handle_struct(FunctionModule, node, firstline, offsetline, outputlines)
     if out == nothing
         parametric = node.args[2] isa Expr
         structName = (parametric ? node.args[2].args[1] : node.args[2])
-        dumpedOutput = Core.eval(UserCode, quote
+        dumpedOutput = Core.eval(FunctionModule, quote
             sprint(io->dump(io, $parametric ? $structName.body : $structName))
         end)
         setOutputText(outputlines, firstline+offsetline-1, dumpedOutput)

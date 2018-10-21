@@ -1,4 +1,5 @@
 import Live
+Live.@script()
 
 Live.@test 
 function helloNathan()
