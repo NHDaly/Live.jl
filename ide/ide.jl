@@ -56,7 +56,7 @@ function new_window()
        <tbody>
         <tr>
          <td>
-           <textarea id="text-editor"></textarea>
+           <textarea id="text-editor">using Live\nLive.@script()\n\n</textarea>
          </td>
          <td>
            <textarea id="output-area">output</textarea>
@@ -104,6 +104,8 @@ function new_window()
                  console.log("sent msg to julia!");))
 
     Blink.handlers(w)["editorchange"] = (txt)->editorchange(w,txt)
+    # Do an initial run.
+    @js w Blink.msg("editorchange", texteditor.getValue());
 end
 
 # User code parsing + eval
@@ -126,7 +128,12 @@ function editorchange(w, editortext)
         global UserCode = Module(:LiveMain)
         setparent!(UserCode, UserCode)
 
+        # Automatically import Live to allow users to enable/disable Live mode:
+        Core.eval(UserCode, :(import Live))
+
         outputlines = DefaultDict{Int,String}("")
+
+        global scriptmode_enabled = false
 
         global text = editortext
         global parsed = parseall(editortext)
@@ -152,6 +159,9 @@ function editorchange(w, editortext)
     nothing
 end
 
+const LIVE_TEST_TRIGGER = :(Live.@test).args[1]
+const LIVE_SCRIPT_TRIGGER = :(Live.@script).args[1]
+
 function evalnode(FunctionModule, node, firstline, latestline, outputlines)
     evalblock(FunctionModule, Expr(:block, node), firstline, latestline, outputlines)
 end
@@ -169,6 +179,36 @@ function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines
                 latestline = node.line
                 continue;
             end
+            # Handle the Live api:
+            if isa(node, Expr) && node.head == :macrocall
+                if node.args[1] == LIVE_SCRIPT_TRIGGER
+                    scriptmode_settings = Core.eval(FunctionModule, node)::Live.ScriptLine
+                    global scriptmode_enabled = scriptmode_settings.enabled
+                elseif node.args[1] == LIVE_TEST_TRIGGER
+                    testline = Core.eval(FunctionModule, node)::Live.TestLine
+                    # For @Live.test lines, live-test the next function
+                    #  within the specified Test Context.
+                    test_next_function = true
+                    test_context = testline.args
+                    # TODO: what to output on Live.@test lines? *Maybe* the context itself?
+                end
+            elseif test_next_function == true && (
+                     isa(node, Expr) && node.head == :function# ||
+                     #(node.head == :(=) && isa(node.args[1], Expr) && node.args[1].head == :call)
+                     )
+                test_next_function = false
+                scriptmode_enabled = true
+                livetest_function(FunctionModule,
+                                  if toplevel latestline else firstline end,
+                                  if toplevel 1 else latestline end,
+                                  node, test_context, outputlines)
+                scriptmode_enabled = false
+            end
+
+            if !scriptmode_enabled
+                continue
+            end
+
             # Handle special-cases for parsed structure
             if isa(node, Expr) && node.head == :block
                 evalblock(FunctionModule, node, firstline, latestline, outputlines)
@@ -185,27 +225,9 @@ function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines
                     error("""syntax: "struct" expression not at top level""")
                 end
                 handle_struct(FunctionModule, node, firstline, latestline, outputlines)
-            elseif test_next_function == true && (
-                     isa(node, Expr) && node.head == :function# ||
-                     #(node.head == :(=) && isa(node.args[1], Expr) && node.args[1].head == :call)
-                     )
-                test_next_function = false
-                livetest_function(FunctionModule,
-                                if toplevel latestline else firstline end,
-                                if toplevel 1 else latestline end,
-                                node, test_context, outputlines)
             else
                 out = Core.eval(FunctionModule, node)
-                # Handle special-cases for evaluated output
-                if is_function_testline_request(out)
-                    # For @Live.test lines, live-test the next function
-                    #  within the specified Test Context.
-                    test_next_function = true
-                    test_context = out.args
-                    # TODO: what to output on Live.@test lines? *Maybe* the context itself?
-                else
-                    setOutputText(outputlines, firstline + latestline-1, repr(out))
-                end
+                setOutputText(outputlines, firstline + latestline-1, repr(out))
             end
         catch er
             showerror(stdout, er, catch_backtrace(), backtrace=true)

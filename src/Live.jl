@@ -4,6 +4,20 @@
 module Live
 
 """
+    Live.@script(enable=true)
+
+Enable script-mode in the LiveIDE, causing it to display live output for each
+subsequent line of this file. Calling `Live.script(false)` will disable output.
+"""
+macro script(enable=true)
+    ScriptLine(enable)
+end
+# This struct tells LiveIDE to enable/disable script-mode.
+struct ScriptLine
+    enabled::Bool
+end
+
+"""
     Live.@test
 
 This is the main interface for Live: Live.@test
