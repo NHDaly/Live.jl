@@ -4,6 +4,7 @@ using Blink
 using DataStructures: DefaultDict
 
 using Live # Define the Live macro for use in the IDE
+Live.@script(false)
 
 include("parsefile.jl")
 
@@ -125,8 +126,9 @@ function editorchange(w, editortext)
     #try  # So errors don't crash my Blink window...
         # Everything evaluated is within this new module each iteration.
         # TODO: change this to :Main once the Live module is in a real package!
-        global UserCode = Module(:LiveMain)
+        global UserCode = Module(:LiveMain, true)
         setparent!(UserCode, UserCode)
+        @eval UserCode import Base.MainInclude: eval, include
 
         # Automatically import Live to allow users to enable/disable Live mode:
         Core.eval(UserCode, :(import Live))
