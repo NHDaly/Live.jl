@@ -5,7 +5,7 @@ using Test
 
 # src/foo.jl
 
-Live.@testfile("./selfTestedFile.jl")
+Live.@testfile(@__FILE__)
 function foo(a,b)
    return (true,false)
 end

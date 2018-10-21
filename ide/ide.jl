@@ -147,6 +147,7 @@ function editorchange(w, globalFilepath, editortext)
         # TODO: eventually each window should probably have its own julia process
         if !isempty(globalFilepath)
             cd(dirname(globalFilepath))  # Execute the code starting from the right file
+            @eval UserCode macro __FILE__() return $globalFilepath end
         end
 
         outputlines = DefaultDict{Int,String}("")
@@ -344,7 +345,8 @@ function handle_live_test_file(FunctionModule, firstline, latestline, testfile, 
         functionname = node.args[1].args[1]
         fargs = node.args[1].args[2:end]
         # TODO: Support more than one context
-        test_context = create_test_context_from_file(testfile.files[1], functionname, fargs)
+        file = Core.eval(FunctionModule, testfile.files[1])  # Eval in case the file is built dynamically.
+        test_context = create_test_context_from_file(file, functionname, fargs)
         if test_context == nothing
             setOutputText(outputlines, liveline, "ERROR: file does not contain a matching Live.@tested($functionname) block")
             return latestline
@@ -366,6 +368,7 @@ struct TestFunctionCalledArgs
     args
 end
 function create_test_context_from_file(file, functionname, fargs)
+    @show file
     testfile_block = parseall(read(file, String))
     testfile_block == nothing && return nothing
     TestFileModule = Module(:TestFile, true)
