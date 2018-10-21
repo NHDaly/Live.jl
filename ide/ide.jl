@@ -381,7 +381,12 @@ function create_test_context_from_file(file, functionname, fargs)
             node = popfirst!(nodeiter)
             @show node
             if isa(node, Expr) && node.head == :macrocall
-                if node.args[1] == LIVE_TESTED_TRIGGER
+                if node.args[1] == LIVE_SCRIPT_TRIGGER ||
+                    node.args[1] == LIVE_TESTFILE_TRIGGER
+                    node.args[1] == LIVE_TEST_TRIGGER
+                    # Skip the other Live.@... macros when running a test file!
+                    continue
+                elseif node.args[1] == LIVE_TESTED_TRIGGER
                     testedline = eval(node)::Live.TestedLine
                     if testedline.functionname == functionname
                         not_linenumber(maybelinenumbernode) = !(maybelinenumbernode isa LineNumberNode)
