@@ -272,7 +272,41 @@ function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines
     return latestline
 end
 
-# Weird code stuff
+# ------------------------------------------------------------------------------
+# Live testing functions
+
+function livetest_function(ScopeModule, firstline, latestline, node, test_context, outputlines)
+    global fnode = node
+    fname = String(fnode.args[1].args[1])
+    fargs = fnode.args[1].args[2:end]
+    body = fnode.args[2]
+
+    # Display the function signature
+    fsig = "$ScopeModule.$(fnode.args[1])"
+    setOutputText(outputlines, firstline+latestline-1, fsig)
+
+    # Everything evaluated here should be within this new module.
+    TestContextModule = deepcopy(ScopeModule)
+    # First, eval the context
+    for expr in test_context
+        Core.eval(TestContextModule, expr)
+    end
+
+    try
+        # TODO: it would be nice to *indent* the output inside a block.
+        evalnode(TestContextModule, body, firstline, latestline, outputlines)
+
+        # Finally, eval the function so it's defined for the rest of the code
+        Core.eval(ScopeModule, node)
+    catch er
+        setOutputText(outputlines, firstline+latestline-1, "$fname: "* sprint(showerror, er))
+        return
+    end
+end
+
+# ------------------------------------------------------------------------------
+# Handling special-cases for parsed structure
+
 function handle_for_loop(FunctionModule, node, firstline, latestline, outputlines)
     global fornode = node
     iterspec_node = node.args[1]
@@ -429,35 +463,6 @@ struct _Module2
 end
 
 # ------------------------------------------------------------------------------
-
-function livetest_function(ScopeModule, firstline, latestline, node, test_context, outputlines)
-    global fnode = node
-    fname = String(fnode.args[1].args[1])
-    fargs = fnode.args[1].args[2:end]
-    body = fnode.args[2]
-
-    # Display the function signature
-    fsig = "$ScopeModule.$(fnode.args[1])"
-    setOutputText(outputlines, firstline+latestline-1, fsig)
-
-    # Everything evaluated here should be within this new module.
-    TestContextModule = deepcopy(ScopeModule)
-    # First, eval the context
-    for expr in test_context
-        Core.eval(TestContextModule, expr)
-    end
-
-    try
-        # TODO: it would be nice to *indent* the output inside a block.
-        evalnode(TestContextModule, body, firstline, latestline, outputlines)
-
-        # Finally, eval the function so it's defined for the rest of the code
-        Core.eval(ScopeModule, node)
-    catch er
-        setOutputText(outputlines, firstline+latestline-1, "$fname: "* sprint(showerror, er))
-        return
-    end
-end
 
 function set_up_app_menu(w)
     # Set handlers to be called from javascript
