@@ -138,7 +138,8 @@ function editorchange(w, globalFilepath, editortext)
         # TODO: change this to :Main once the Live module is in a real package!
         global UserCode = Module(:LiveMain, true)
         setparent!(UserCode, UserCode)
-        @eval UserCode import Base.MainInclude: eval, include
+        @eval UserCode include(fname::AbstractString) = Main.Base.include(@__MODULE__, fname)
+
 
         # Automatically import Live to allow users to enable/disable Live mode:
         Core.eval(UserCode, :(import Live))
@@ -361,6 +362,7 @@ function handle_module(FunctionModule, node, firstline, offsetline, outputlines)
     module_name = node.args[2]
     NewModule = Module(module_name, true)
     setparent!(NewModule, FunctionModule)
+    @eval NewModule include(fname::AbstractString) = Main.Base.include(@__MODULE__, fname)
     restblock = node.args[3]
     evalnode(NewModule, restblock, offsetline, 1, outputlines; toplevel=true)
     #setOutputText(outputlines, firstline+offsetline-1, string(module_name))
@@ -401,13 +403,15 @@ end
 function import_names_into(destmodule, srcmodule)
     fullsrcname = Meta.parse(join(fullname(srcmodule), "."))
     for n in names(srcmodule, all=true, imported=true)
-        if n != nameof(destmodule)  # don't copy itself into itself
+        # don't copy itself into itself; don't copy `include`, define it below instead
+        if n != nameof(destmodule) && n != :include
             Core.eval(destmodule, :($n = $(Core.eval(srcmodule, n))))
         end
     end
     for m in usings(srcmodule)
         Core.eval(destmodule, :($(nameof(m)) = $(Core.eval(srcmodule, m))))
     end
+    @eval destmodule include(fname::AbstractString) = Main.Base.include(@__MODULE__, fname)
 end
 
 usings(m::Module) =
