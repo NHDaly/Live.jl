@@ -18,6 +18,8 @@ function new_window()
     if bg_window == nothing
         bg_window = Window(Dict(:show=>false), async=false)
 
+        # To allow using JQuery in electron:
+        # https://electronjs.org/docs/faq#i-can-not-use-jqueryrequirejsmeteorangularjs-in-electron
         js(bg_window, Blink.JSString("""
             window.nodeRequire = require;
             window.nodeExports = window.exports;
@@ -33,7 +35,8 @@ function new_window()
     title(w, "untitled")
     #tools(w)
 
-    # Set up to allow loading modules
+    # To allow using JQuery in electron:
+    # https://electronjs.org/docs/faq#i-can-not-use-jqueryrequirejsmeteorangularjs-in-electron
     js(w, Blink.JSString("""
         window.nodeRequire = require;
         window.nodeExports = window.exports;
@@ -42,8 +45,6 @@ function new_window()
         delete window.exports;
         delete window.module;
      """))
-
-    set_up_window_menu(w)
 
     load!(w, "frameworks/jquery-3.3.1.js", async=true)
 
@@ -101,6 +102,9 @@ function new_window()
      """))
 
     global outputText = @js w outputarea.getValue()
+
+    # Set up save and open functions
+    set_up_window_menu(w)
 
     # (globalFilepath is set when saving/loading files. Passing it allows cd() before executing.)
     @js w texteditor.on("update",
