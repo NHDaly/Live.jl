@@ -486,15 +486,24 @@ function handle_while_loop(FunctionModule, node, firstline, outputlines)
     display_loop_lines(outputlines, iteration_outputs)
 end
 function display_loop_lines(outputlines, iteration_outputs)
-    # For now, just append each iteration's outputs on the line.
-    lineouts = DefaultDict{Int, Array{String}}(()->[])
-    for outputs in iteration_outputs
+    global iterouts = iteration_outputs
+    all_lines = keys(merge(iteration_outputs...))
+    lmin, lmax = minimum(all_lines), maximum(all_lines)
+    len = lmax - lmin + 1
+    out_array = fill("", (len, length(iteration_outputs)))
+    for (i,outputs) in enumerate(iteration_outputs)
         for (l, s) in outputs
-            push!(lineouts[l], s)
+            out_array[l-lmin+1, i] = s
         end
     end
-    for (line, outs) in lineouts
-        setOutputText(outputlines, line, join(outs, ", "))
+    for i in 1:size(out_array)[2]
+        maxsize = maximum(length.(out_array[:,i]))
+        out_array[:,i] .= rpad.(out_array[:,i], maxsize)
+    end
+    for i in 1:size(out_array)[1]
+        line = i+lmin-1
+        val = join(out_array[i,:], " | ")
+        setOutputText(outputlines, i+lmin-1, join(out_array[i,:], " | "))
     end
 end
 
