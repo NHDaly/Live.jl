@@ -731,7 +731,7 @@ function set_up_window_menu(w)
         end
         contents = read(selectedfiles[1], String)
         @js_ w texteditor.setValue($contents)
-        title(w, basename(selectedfiles[1]))
+        title(w, selectedfiles[1])
     end
 
     save_file(args::Array) = save_file(args...)  # js sends args as an array
@@ -741,7 +741,7 @@ function set_up_window_menu(w)
             return
         end
         write(selectedfile, contents)
-        title(w, basename(selectedfile))
+        title(w, selectedfile)
     end
 
     # Set handlers to be called from javascript
