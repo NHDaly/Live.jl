@@ -24,11 +24,7 @@ function parseall(str)
         if ex isa Expr
             ex.head == :toplevel ? exs = ex.args : exs = [ex] #see StackOverflow comments for info
             for e in exs
-                #if e.head == :using
-                #    eval(e)  # eval :using Expressions globally rather than inserting.
-                #else
                 push!(exprs, e)
-                #end
             end
         else  # Symbol/Literal
             push!(exprs, ex)
@@ -36,8 +32,6 @@ function parseall(str)
     end
     if length(exprs) == 0
         return nothing
-    #elseif length(exprs) == 1
-    #    return exprs[1]
     else
         return Expr(:block, exprs...) # convert the array of expressions
                                       # back to a single expression
