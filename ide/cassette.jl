@@ -109,11 +109,13 @@ thunkwrap_toplevel(head::Val{:(=)}, expr::Expr) = thunkwrap(quote eval($(QuoteNo
 
 struct ModuleThunk
     expr
+    parent
 end
-(thunk::ModuleThunk)() = eval(thunk.expr)
+(thunk::ModuleThunk)() = Core.eval(thunk.parent, thunk.expr)
 
 function thunkwrap_toplevel(head::Val{:module}, expr::Expr)
-    return quote ModuleThunk($(QuoteNode(expr)))() end
+    expr.args[3] = thunkwrap_toplevel(expr.args[3])
+    return quote ModuleThunk($(QuoteNode(expr)), @__MODULE__)() end
 end
 
 function Cassette.execute(ctx::LiveCtx, f::ModuleThunk)::Module
@@ -124,11 +126,11 @@ function Cassette.execute(ctx::LiveCtx, f::ModuleThunk)::Module
         ModuleThunk = $(@__MODULE__).ModuleThunk
         #$(thunkwrap_toplevel(expr.args[3]))
         Cassette = $(@__MODULE__).Cassette
-        Cassette.overdub($ctx, ()->$(thunkwrap_toplevel(f.expr.args[3])))
+        Cassette.overdub($ctx, ()->$(f.expr.args[3]))
     end
     #println(expr)
     #thunkwrap(quote eval($(QuoteNode(expr))) end)
-    eval(f.expr)::Module
+    Core.eval(f.parent, f.expr)::Module
 end
 
 ctx = LiveCtx(metadata = CollectedOutputs([], 0))
@@ -137,8 +139,15 @@ ctx = LiveCtx(metadata = CollectedOutputs([], 0))
         struct X end
         G = 20
         G + 5
-        println("HI")
+        module Inner
+            println("HI")
+            x = 10
+        end
+        function f(x) x end
     end
+    M.G + 100
+    M.Inner.x
+    #M.f("hey")
     function foo(x)
         if (x > 0)
             100
