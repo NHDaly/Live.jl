@@ -17,6 +17,7 @@ end
 function thunkwrap(head::Val{:function}, expr::Expr)
     expr.args[2] = thunkwrap(expr.args[2])
     return expr
+    #return quote Thunk(()->$expr)() end
 end
 function thunkwrap(head::Union{Val{:if},Val{:elseif}}, expr::Expr)
     for (i,node) in enumerate(expr.args)
@@ -60,8 +61,13 @@ mutable struct CollectedOutputs
     outputs
     lastline::Int
 end
-Cassette.posthook(ctx::LiveCtx, output, f::Thunk) = push!(ctx.metadata.outputs, (ctx.metadata.lastline => output))
-Cassette.execute(::LiveCtx, line::LineNodeThunk) = (ctx.metadata.lastline = line.linenode.line; nothing)
+function Cassette.posthook(ctx::LiveCtx, output, f::Thunk)
+    push!(ctx.metadata.outputs, (ctx.metadata.lastline => output))
+end
+function Cassette.execute(::LiveCtx, line::LineNodeThunk)
+    ctx.metadata.lastline = line.linenode.line
+    nothing
+end
 
 ctx = LiveCtx(metadata = CollectedOutputs([], 0))
 @time @eval Cassette.overdub(ctx, ()->$(thunkwrap(quote
@@ -91,20 +97,38 @@ end
 thunkwrap_toplevel(linenode::LineNumberNode) = thunkwrap(linenode)
 thunkwrap_toplevel(literal) = thunkwrap(literal)
 # Final leaf nodes just fall-back to thunkwrap:
-thunkwrap_toplevel(head, expr::Expr) = thunkwrap(head,expr)
+function thunkwrap_toplevel(head, expr::Expr)
+    thunkwrap(head,expr)
+    #return quote Thunk(()->$(thunkwrap(head,expr)))() end
+end
 ## Valid top-level expressions:
 thunkwrap_toplevel(head::Val{:struct}, expr::Expr) = thunkwrap(quote eval($(QuoteNode(expr))) end)
 thunkwrap_toplevel(head::Val{:import}, expr::Expr) = thunkwrap(quote eval($(QuoteNode(expr))) end)
 thunkwrap_toplevel(head::Val{:using}, expr::Expr) = thunkwrap(quote eval($(QuoteNode(expr))) end)
 thunkwrap_toplevel(head::Val{:(=)}, expr::Expr) = thunkwrap(quote eval($(QuoteNode(expr))) end)
+
+struct ModuleThunk
+    expr
+end
+(thunk::ModuleThunk)() = eval(thunk.expr)
+
 function thunkwrap_toplevel(head::Val{:module}, expr::Expr)
-    expr.args[3] = quote
+    return quote ModuleThunk($(QuoteNode(expr)))() end
+end
+
+function Cassette.execute(ctx::LiveCtx, f::ModuleThunk)::Module
+    #push!(ctx.metadata.outputs, (ctx.metadata.lastline => output))
+    f.expr.args[3] = quote
         LineNodeThunk = $(@__MODULE__).LineNodeThunk
         Thunk = $(@__MODULE__).Thunk
-        $(thunkwrap_toplevel(expr.args[3]))
+        ModuleThunk = $(@__MODULE__).ModuleThunk
+        #$(thunkwrap_toplevel(expr.args[3]))
+        Cassette = $(@__MODULE__).Cassette
+        Cassette.overdub($ctx, ()->$(thunkwrap_toplevel(f.expr.args[3])))
     end
     #println(expr)
-    thunkwrap(quote eval($(QuoteNode(expr))) end)
+    #thunkwrap(quote eval($(QuoteNode(expr))) end)
+    eval(f.expr)::Module
 end
 
 ctx = LiveCtx(metadata = CollectedOutputs([], 0))
@@ -138,4 +162,5 @@ ctx = LiveCtx(metadata = CollectedOutputs([], 0))
 
 
 # -----------
+
 end
