@@ -16,6 +16,13 @@ function thunkwrap(head::Val{:block}, expr::Expr)
 end
 function thunkwrap(head::Val{:function}, expr::Expr)
     expr.args[2] = thunkwrap(expr.args[2])
+   fname = expr.args[1].args[1]
+    return quote ($expr; $(thunkwrap(String(fname)))) end
+    # return expr
+    #return quote Thunk(()->$expr)() end
+end
+function thunkwrap(head::Val{:(=)}, expr::Expr)
+    expr.args[2] = thunkwrap(expr.args[2])
     return expr
     #return quote Thunk(()->$expr)() end
 end
@@ -98,14 +105,18 @@ thunkwrap_toplevel(linenode::LineNumberNode) = thunkwrap(linenode)
 thunkwrap_toplevel(literal) = thunkwrap(literal)
 # Final leaf nodes just fall-back to thunkwrap:
 function thunkwrap_toplevel(head, expr::Expr)
-    thunkwrap(head,expr)
+    quote Core.eval(@__MODULE__, $(thunkwrap(head,expr))) end
     #return quote Thunk(()->$(thunkwrap(head,expr)))() end
 end
 ## Valid top-level expressions:
-thunkwrap_toplevel(head::Val{:struct}, expr::Expr) = thunkwrap(quote eval($(QuoteNode(expr))) end)
-thunkwrap_toplevel(head::Val{:import}, expr::Expr) = thunkwrap(quote eval($(QuoteNode(expr))) end)
-thunkwrap_toplevel(head::Val{:using}, expr::Expr) = thunkwrap(quote eval($(QuoteNode(expr))) end)
-thunkwrap_toplevel(head::Val{:(=)}, expr::Expr) = thunkwrap(quote eval($(QuoteNode(expr))) end)
+thunkwrap_toplevel(head::Val{:struct}, expr::Expr) = thunkwrap(quote Core.eval(@__MODULE__, $(QuoteNode(expr))) end)
+thunkwrap_toplevel(head::Val{:import}, expr::Expr) = thunkwrap(quote Core.eval(@__MODULE__, $(QuoteNode(expr))) end)
+thunkwrap_toplevel(head::Val{:using}, expr::Expr) = thunkwrap(quote Core.eval(@__MODULE__, $(QuoteNode(expr))) end)
+thunkwrap_toplevel(head::Val{:(=)}, expr::Expr) = thunkwrap(quote Core.eval(@__MODULE__, $(QuoteNode(expr))) end)
+function thunkwrap_toplevel(head::Val{:function}, expr::Expr)
+    thunkwrap(quote Core.eval(@__MODULE__, $(QuoteNode(thunkwrap(expr)))) end)
+end
+
 
 struct ModuleThunk
     expr
@@ -135,6 +146,7 @@ end
 
 ctx = LiveCtx(metadata = CollectedOutputs([], 0))
 @time @eval Cassette.overdub(ctx, ()->$(thunkwrap_toplevel(quote
+    module Test
     module M
         struct X end
         G = 20
@@ -144,13 +156,19 @@ ctx = LiveCtx(metadata = CollectedOutputs([], 0))
             x = 10
         end
         function f(x) x end
+        f(2)
+        println(f)
+        println(typeof(f).name.module)
     end
     M.G + 100
     M.Inner.x
-    #M.f("hey")
     function foo(x)
-        if (x > 0)
-            100
+        y = x
+        if (y > 0)
+            function helper(y)
+              y+100
+            end
+            helper(10)
         elseif (x == 0)
             x+5;
         elseif (x < 10)
@@ -158,15 +176,20 @@ ctx = LiveCtx(metadata = CollectedOutputs([], 0))
         else 0 end
     end
     foo(3)
+    M.f("hey")
+end
 end)))
 @show ctx.metadata.outputs
+foo
+
+Core.eval(Main, quote Core.eval(Main, (()->quote f2(x) = x+1 end)()) end)
 
 # -------- whole file
 
 include("parsefile.jl")
 ctx = LiveCtx(metadata = CollectedOutputs([], 0))
 @time @eval Cassette.overdub(ctx,
-    ()->$(thunkwrap_toplevel(parseall(read("$(@__DIR__)/../examples/modules.jl", String)))))
+    ()->$(thunkwrap_toplevel(parseall(read("$(@__DIR__)/../examples/example1.jl", String)))))
 @show ctx.metadata.outputs
 
 
