@@ -2,6 +2,10 @@
 
 module LiveIDE
 
+cd(@__DIR__)
+using Pkg
+Pkg.activate(".")
+
 using Blink
 using DataStructures: DefaultDict
 
@@ -9,8 +13,7 @@ using Live # Define the Live macro for use in the IDE
 Live.@script(false)
 
 include("parsefile.jl")
-
-cd(@__DIR__)
+include("cassette.jl")
 
 global bg_window = nothing
 function new_window()
@@ -136,33 +139,25 @@ is_function_testline_request(_::Live.TestLine) = true
 
 function editorchange(w, globalFilepath, editortext)
     #try  # So errors don't crash my Blink window...
-        # Everything evaluated is within this new module each iteration.
-        # TODO: change this to :Main once the Live module is in a real package!
-        global UserCode = Module(:LiveMain, true)
-        setparent!(UserCode, UserCode)
-        @eval UserCode include(fname::AbstractString) = Main.Base.include(@__MODULE__, fname)
-
-
-        # Automatically import Live to allow users to enable/disable Live mode:
-        Core.eval(UserCode, :(import Live))
-
-        # TODO: eventually each window should probably have its own julia process
-        if !isempty(globalFilepath)
-            cd(dirname(globalFilepath))  # Execute the code starting from the right file
-            @eval UserCode macro __FILE__() return $globalFilepath end
-        end
-
         outputlines = DefaultDict{Int,String}("")
 
         global scriptmode_enabled = false
 
-        global text = editortext
-        global parsed = parseall(editortext)
         try
+            global text = editortext
+            global parsed = parseall(editortext)
             # TODO: ooh, we should also probably swipe stdout so that it also
             # writes to the app. Perhaps in a different type of output div.
-            evalblock(UserCode, parsed, 1, 1, outputlines; toplevel=true, keepgoing=true)
-        catch end
+            UserCode = Module(:UserCode)
+            setparent!(UserCode, UserCode)
+            outs = CassetteLive.liveEvalCassette(parsed, UserCode)
+            for (l, v) in outs
+                if v === nothing continue end
+                outputlines[l] *= "$v "
+            end
+        catch e
+            Base.display_error(e)
+        end
 
         # -- Display output in js window after everything is done --
         maximum_or_default(itr, default) = isempty(itr) ? default : maximum(itr)
@@ -180,411 +175,7 @@ function editorchange(w, globalFilepath, editortext)
     nothing
 end
 
-const LIVE_SCRIPT_TRIGGER = :(Live.@script).args[1]
-const LIVE_TEST_TRIGGER = :(Live.@test).args[1]
-const LIVE_TESTFILE_TRIGGER = :(Live.@testfile).args[1]
-const LIVE_TESTED_TRIGGER = :(Live.@tested).args[1]
-
-function evalnode(FunctionModule, node, firstline, latestline, outputlines;
-                    toplevel=false, keepgoing=false, blocknode_iter=nothing)
-    global gnode = node
-    global scriptmode_enabled
-    try
-        if isa(node, LineNumberNode)
-            return node.line
-        end
-        # Handle the Live api:
-        if isa(node, Expr) && node.head == :macrocall
-            if node.args[1] == LIVE_SCRIPT_TRIGGER
-                scriptmode_settings = Core.eval(FunctionModule, node)::Live.ScriptLine
-                scriptmode_enabled = scriptmode_settings.enabled
-                setOutputText(outputlines, firstline + latestline-1, "Script Mode: $(scriptmode_enabled)")
-                return latestline
-            elseif node.args[1] == LIVE_TEST_TRIGGER
-                testline = Core.eval(FunctionModule, node)::Live.TestLine
-                # For @Live.test lines, live-test the next function
-                #  within the specified Test Context.
-                return handle_live_test_line(FunctionModule, firstline, latestline, testline, blocknode_iter, outputlines, toplevel, keepgoing)
-            elseif node.args[1] == LIVE_TESTFILE_TRIGGER
-                testfile = Core.eval(FunctionModule, node)::Live.TestFileLine
-                return handle_live_test_file(FunctionModule, firstline, latestline, testfile, blocknode_iter, outputlines, toplevel, keepgoing)
-            elseif node.args[1] == LIVE_TESTED_TRIGGER
-            end
-        end
-        if !scriptmode_enabled
-            return latestline
-        end
-
-        # Handle special-cases for parsed structure
-        if isa(node, Expr) && node.head == :block
-            latestline = evalblock(FunctionModule, node, firstline, latestline, outputlines)
-        elseif isa(node, Expr) && node.head == :while
-            handle_while_loop(FunctionModule, node, firstline, outputlines)
-        elseif isa(node, Expr) && node.head == :for
-            handle_for_loop(FunctionModule, node, firstline, latestline, outputlines)
-        elseif isa(node, Expr) && node.head == :if
-            handle_if(FunctionModule, node, firstline, latestline, outputlines)
-        elseif isa(node, Expr) && node.head == :module
-            handle_module(FunctionModule, node, firstline, latestline, outputlines)
-        elseif isa(node, Expr) && node.head == :struct
-            if toplevel != true
-                #showerror(stdout, "NATHAN", backtrace(), backtrace=true)
-                error("""syntax: "struct" expression not at top level""")
-            end
-            handle_struct(FunctionModule, node, firstline, latestline, outputlines)
-        else
-            out = Core.eval(FunctionModule, node)
-            setOutputText(outputlines, firstline + latestline-1, repr(out))
-        end
-    catch er
-        #showerror(stdout, er, catch_backtrace(), backtrace=true)
-        setOutputText(outputlines, firstline+latestline-1, sprint(showerror, er))
-        if !keepgoing
-            rethrow(er)
-        end
-    end
-end
-function evalblock(FunctionModule, blocknode, firstline, latestline, outputlines;
-                    toplevel=false, keepgoing=false)
-    # Track whether Live.@script() is enabled
-    global scriptmode_enabled
-    # These are for implementing Live.@test lines, since they're a non-standard
-    # macro (since they affect the "next" line, which a macro isn't really
-    # supposed to do.)
-    nodeiter = Iterators.Stateful(blocknode.args);
-    while !isempty(nodeiter)
-        node = popfirst!(nodeiter)
-        # Note that
-        latestline = evalnode(FunctionModule, node, firstline, latestline,
-                              outputlines; toplevel=toplevel, keepgoing=keepgoing,
-                              blocknode_iter=nodeiter)
-    end
-    return latestline
-end
-
-# ------------------------------------------------------------------------------
-# Live testing functions
-
-function handle_live_test_line(FunctionModule, firstline, latestline, testline, blocknode_iter, outputlines, toplevel, keepgoing)
-    global scriptmode_enabled
-    test_context = testline.args
-    if blocknode_iter != nothing
-        latestline, node = pop_next_matching_node(is_function_node, blocknode_iter, latestline)
-        if (node == nothing)
-            setOutputText(outputlines, firstline+latestline-1, "ERROR: Live.@test must precede a function definition.")
-            return latestline
-        end
-        # Always enable script mode while executing a Live.@test function
-        prev_scriptmode = scriptmode_enabled
-        scriptmode_enabled = true
-        livetest_function(FunctionModule,
-                          if toplevel latestline else firstline end,
-                          if toplevel 1 else latestline end,
-                          node, test_context, outputlines)
-        scriptmode_enabled = prev_scriptmode
-    end
-end
-function pop_next_matching_node(node_matcher, blocknode_iter, latestline)
-    # Get the next node, which should be a function. (If it's a LineNumberNode, consume it and continue.)
-    while !isempty(blocknode_iter)
-        node = popfirst!(blocknode_iter)
-        if node_matcher(node)
-            return (latestline, node)
-        elseif isa(node, LineNumberNode)
-            latestline = node.line
-        else
-            # Next node wasn't a function. Give up on this.
-            return (latestline, nothing)
-            #latestline = evalnode(FunctionModule, node, firstline, latestline,
-            #                      outputlines; toplevel=toplevel, keepgoing=keepgoing,
-            #                      blocknode_iter=blocknode_iter)
-        end
-    end
-    return (latestline, nothing)
-end
-function livetest_function(ScopeModule, firstline, latestline, node, test_context, outputlines)
-    global fnode = node
-    fname = String(fnode.args[1].args[1])
-    fargs = fnode.args[1].args[2:end]
-    body = fnode.args[2]
-
-    # Display the function signature
-    fsig = "$ScopeModule.$(fnode.args[1])"
-    setOutputText(outputlines, firstline+latestline-1, fsig)
-
-    # Everything evaluated here should be within this new module.
-    TestContextModule = deepcopy(ScopeModule)
-    # First, eval the context
-    for expr in test_context
-        Core.eval(TestContextModule, expr)
-    end
-
-    try
-        # TODO: it would be nice to *indent* the output inside a block.
-        evalnode(TestContextModule, body, firstline, latestline, outputlines)
-
-        # Finally, eval the function so it's defined for the rest of the code
-        Core.eval(ScopeModule, node)
-    catch er
-        setOutputText(outputlines, firstline+latestline-1, "$fname: "* sprint(showerror, er))
-        return
-    end
-end
-
-is_function_node(n) = (isa(n, Expr) && n.head == :function# ||
-    #(n.head == :(=) && isa(n.args[1], Expr) && n.args[1].head == :call)
-)
-
-function handle_live_test_file(FunctionModule, firstline, latestline, testfile, blocknode_iter, outputlines, toplevel, keepgoing)
-    global scriptmode_enabled
-    liveline = firstline+latestline
-    if blocknode_iter != nothing
-        latestline, node = pop_next_matching_node(is_function_node, blocknode_iter, latestline)
-        if (node == nothing)
-            setOutputText(outputlines, liveline, "ERROR: Live.@testfile must precede a function definition.")
-            return latestline
-        end
-        functionname = node.args[1].args[1]
-        fargs = node.args[1].args[2:end]
-        # TODO: Support more than one context
-        file = Core.eval(FunctionModule, testfile.files[1])  # Eval in case the file is built dynamically.
-        test_context = create_test_context_from_file(file, functionname, fargs)
-        if test_context == nothing
-            setOutputText(outputlines, liveline, "ERROR: file does not contain a matching Live.@tested($functionname) block")
-            return latestline
-        end
-        # Set output text to show the test:
-        setOutputText(outputlines, liveline, "Testing: $(join(test_context, ", "))")
-
-        # Always enable script mode while executing a Live.@test function
-        prev_scriptmode = scriptmode_enabled
-        scriptmode_enabled = true
-        livetest_function(FunctionModule,
-                          if toplevel latestline else firstline end,
-                          if toplevel 1 else latestline end,
-                          node, test_context, outputlines)
-        scriptmode_enabled = prev_scriptmode
-    end
-end
-function create_test_context_from_file(file, functionname, fargs)
-    #@show file
-    testfile_block = parseall(read(file, String))
-    testfile_block == nothing && return nothing
-    TestFileModule = Module(:TestFile, true)
-    setparent!(TestFileModule, TestFileModule)
-    @eval TestFileModule include(fname::AbstractString) = Main.Base.include(@__MODULE__, fname)
-    Core.eval(TestFileModule, :(import Live))
-
-    cwd = pwd()
-    cd(dirname(file))
-    try  # finally to cd back to cwd
-        nodeiter = Iterators.Stateful(testfile_block.args);
-        while !isempty(nodeiter)
-            node = popfirst!(nodeiter)
-            if isa(node, Expr) && node.head == :macrocall
-                if node.args[1] == LIVE_SCRIPT_TRIGGER ||
-                    node.args[1] == LIVE_TESTFILE_TRIGGER
-                    node.args[1] == LIVE_TEST_TRIGGER
-                    # Skip the other Live.@... macros when running a test file!
-                    continue
-                elseif node.args[1] == LIVE_TESTED_TRIGGER
-                    testedline = eval(node)::Live.TestedLine
-                    if testedline.functionname == functionname
-                        not_linenumber(maybelinenumbernode) = !(maybelinenumbernode isa LineNumberNode)
-                        _, testnode = pop_next_matching_node(not_linenumber, nodeiter, 1)
-                        if testnode == nothing
-                            #println("SKIPPING NODE")
-                            continue
-                        end
-                        # Copy the module and override its definition of the function
-                        TestModuleCopy = deepcopy(TestFileModule)
-                        args_channel = Channel(1)
-                        fakefunc(args...) = put!(args_channel, args)  # Notify caller
-                        @eval TestModuleCopy $functionname = $fakefunc
-                        # Now evaluate the test block, and catch the first call!
-                        @async try
-                            Core.eval(TestModuleCopy, testnode)
-                        catch e
-                            #@show e
-                        finally
-                            put!(args_channel, nothing)
-                        end
-                        # Wait until the args are passed!
-                        testargs = take!(args_channel)
-                        #@show testargs
-                        if (testargs == nothing)
-                            return nothing
-                        end
-                        return Tuple(:($arg=$val) for (arg,val) in zip(fargs, testargs))
-                    end
-                else
-                    evalnode(TestFileModule, node, 1, 1, Dict(); toplevel=true)
-                end
-            end
-        end
-    catch e
-        #showerror(stdout, e, catch_backtrace(), backtrace=true)
-    finally
-        cd(cwd)
-    end
-    return nothing
-end
-# ------------------------------------------------------------------------------
-# Handling special-cases for parsed structure
-
-function handle_for_loop(FunctionModule, node, firstline, latestline, outputlines)
-    global fornode = node
-    iterspec_node = node.args[1]
-    body = node.args[2]
-    # Modify the iteration specification variable's name to a temp.
-    itervariable = iterspec_node.args[1]
-    # Start interpreting the for-loop
-    try
-        iterspec = Core.eval(FunctionModule, iterspec_node.args[2])  # just the range itself
-        temp = Base.iterate(iterspec)
-        iteration_outputs = []
-        while temp != nothing
-            loopoutputs = DefaultDict{Int,String}("")
-            Core.eval(FunctionModule, :($itervariable = $(Expr(:quote, temp[1]))))
-            try
-                latestline = evalnode(FunctionModule, body, firstline, latestline, loopoutputs)
-            catch e
-                push!(iteration_outputs, loopoutputs)
-                display_loop_lines(outputlines, iteration_outputs)
-                throw(e)
-            end
-            push!(iteration_outputs, loopoutputs)
-            temp = Base.iterate(iterspec, temp[2])
-        end
-        display_loop_lines(outputlines, iteration_outputs)
-    catch e
-        # TODO: Simplify this error handling by having a global line counter & _maybe_ even a global outputlines.
-        setOutputText(outputlines, firstline+latestline-1, sprint(showerror, er))
-        # TODO: Re-evaluate this decision.. maybe there's no reason to rethrow here at all!
-        #   Maybe it's _cool_ that it keeps evaluating as best it can! Something to consider.
-        #   Also, removing these would be easier, i think.
-        #   Oooh, the coolest thing would be like, to make the rest of the output red or something!
-        rethrow(e)
-    end
-end
-function handle_while_loop(FunctionModule, node, firstline, outputlines)
-    global whilenode = node
-    test = node.args[1]
-    body = node.args[2]
-    iteration_outputs = []
-    latestline = 1
-    # TODO: Add a manual depth-check so we don't freeze the program with a while true end.
-    while Core.eval(FunctionModule, test)
-        loopoutputs = DefaultDict{Int,String}("")
-        try
-            latestline = evalnode(FunctionModule, body, firstline, latestline, loopoutputs)
-        catch e
-            push!(iteration_outputs, loopoutputs)
-            display_loop_lines(outputlines, iteration_outputs)
-            rethrow(e)
-        end
-        push!(iteration_outputs, loopoutputs)
-    end
-    display_loop_lines(outputlines, iteration_outputs)
-end
-function display_loop_lines(outputlines, iteration_outputs)
-    global iterouts = iteration_outputs
-    all_lines = keys(merge(iteration_outputs...))
-    lmin, lmax = minimum(all_lines), maximum(all_lines)
-    len = lmax - lmin + 1
-    out_array = fill("", (len, length(iteration_outputs)))
-    for (i,outputs) in enumerate(iteration_outputs)
-        for (l, s) in outputs
-            out_array[l-lmin+1, i] = s
-        end
-    end
-    for i in 1:size(out_array)[2]
-        maxsize = maximum(length.(out_array[:,i]))
-        out_array[:,i] .= rpad.(out_array[:,i], maxsize)
-    end
-    for i in 1:size(out_array)[1]
-        line = i+lmin-1
-        val = join(out_array[i,:], " | ")
-        setOutputText(outputlines, i+lmin-1, join(out_array[i,:], " | "))
-    end
-end
-
-function handle_if(FunctionModule, node, firstline, offsetline, outputlines)
-    global ifnode = node
-    test = node.args[1]
-    trueblock = node.args[2]
-    restblock = if (length(node.args) > 2) node.args[3] else nothing end
-    testval = Core.eval(FunctionModule, test)
-    #setOutputText(outputlines, firstline, repr(testval))
-    if testval
-        evalnode(FunctionModule, trueblock, firstline, offsetline, outputlines)
-    elseif restblock != nothing && restblock.head == :elseif
-        handle_if(FunctionModule, restblock, firstline, offsetline, outputlines)
-    else
-        evalnode(FunctionModule, restblock, firstline, offsetline, outputlines)
-    end
-end
-
-function handle_module(FunctionModule, node, firstline, offsetline, outputlines)
-    global modulenode = node
-    module_name = node.args[2]
-    NewModule = Module(module_name, true)
-    setparent!(NewModule, FunctionModule)
-    @eval NewModule include(fname::AbstractString) = Main.Base.include(@__MODULE__, fname)
-    restblock = node.args[3]
-    evalnode(NewModule, restblock, offsetline, 1, outputlines; toplevel=true)
-    #setOutputText(outputlines, firstline+offsetline-1, string(module_name))
-    # Now add the created module into FunctionModule:
-    Core.eval(FunctionModule, :($module_name = $NewModule))
-end
-
-function handle_struct(FunctionModule, node, firstline, offsetline, outputlines)
-    global structnode = node
-    # Eval the struct
-    out = Core.eval(FunctionModule, node)
-    # Assuming struct definition has no output (like usual),
-    # let's make the output be: `dump(StructName)`
-    # (handle parametric types)
-    if out == nothing
-        parametric = node.args[2] isa Expr
-        structName = (parametric ? node.args[2].args[1] : node.args[2])
-        dumpedOutput = Core.eval(FunctionModule, quote
-            sprint(io->dump(io, $parametric ? $structName.body : $structName))
-        end)
-        setOutputText(outputlines, firstline+offsetline-1, dumpedOutput)
-    else
-        setOutputText(outputlines, firstline+offsetline-1, repr(out))
-    end
-end
-
-# ------------ MODULES: Custom implementation of deepcopy(m::Module) ---------------------------
-import Base: deepcopy
-function deepcopy(m::Module)
-    global sourceModule=m
-    m2 = Module(nameof(m), true)
-    import_names_into(m2, m)
-    setparent!(m2, parentmodule(m))
-    return m2
-end
-
-# Note: this is a shallow copy! (Only imports the _names_ -- shares refs)
-function import_names_into(destmodule, srcmodule)
-    fullsrcname = Meta.parse(join(fullname(srcmodule), "."))
-    for m in usings(srcmodule)
-        full_using_name = Expr(:., fullname(m)...)
-        Core.eval(destmodule, Expr(:using, full_using_name))
-    end
-    for n in names(srcmodule, all=true, imported=true)
-        # don't copy itself into itself; don't copy `include`, define it below instead
-        if n != nameof(destmodule) && n != :include
-            Core.eval(destmodule, :($n = $(Core.eval(srcmodule, n))))
-        end
-    end
-    @eval destmodule include(fname::AbstractString) = Main.Base.include(@__MODULE__, fname)
-end
-
-usings(m::Module) =
-    ccall(:jl_module_usings, Array{Module,1}, (Any,), m)
+# ------------ MODULES: Custom module functions ---------------------------
 
 # EWWWWWWWW, this is super hacky. This would need to be an additional C API either to allow
 # setting a module's Parent, or to allow constructing a module with a parent.
