@@ -36,7 +36,7 @@ function thunkwrap(head::Union{Val{:if},Val{:elseif}}, expr::Expr)
 end
 # Final leaf nodes
 function thunkwrap(head, expr::Expr)
-    return quote Thunk(()->$expr)() end
+    return quote $Thunk(()->$expr)() end
 end
 
 struct LineNodeThunk
@@ -44,8 +44,8 @@ struct LineNodeThunk
 end
 (thunk::LineNodeThunk)() = nothing
 thunkwrap(linenode::LineNumberNode) =
-                quote LineNodeThunk(LineNumberNode($(linenode.line), $(string(linenode.file))))() end
-thunkwrap(literal) = quote Thunk(()->$literal)() end
+                quote $LineNodeThunk(LineNumberNode($(linenode.line), $(string(linenode.file))))() end
+thunkwrap(literal) = quote $Thunk(()->$literal)() end
 
 
 # Now that that's all set up, we can use cassette to capture the values from those thunks!
@@ -99,7 +99,7 @@ end
 
 function thunkwrap_toplevel(head::Val{:module}, expr::Expr)
     expr.args[3] = thunkwrap_toplevel(expr.args[3])
-    return quote ModuleThunk($(QuoteNode(expr)), @__MODULE__)() end
+    return quote $ModuleThunk($(QuoteNode(expr)), @__MODULE__)() end
 end
 
 function Cassette.execute(ctx::LiveCtx, f::ModuleThunk)::Module
@@ -121,10 +121,10 @@ end
 
 include("parsefile.jl")
 
-function liveEvalCassette(expr)
+function liveEvalCassette(expr, usermodule=@__MODULE__)
     ctx = LiveCtx(metadata = CollectedOutputs([], 0))
     try
-    @eval Cassette.overdub($ctx, ()->$(thunkwrap_toplevel(expr)))
+    @eval usermodule $Cassette.overdub($ctx, ()->$(thunkwrap_toplevel(expr)))
     catch e
         @warn e
     end

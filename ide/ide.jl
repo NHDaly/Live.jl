@@ -139,32 +139,18 @@ is_function_testline_request(_::Live.TestLine) = true
 
 function editorchange(w, globalFilepath, editortext)
     #try  # So errors don't crash my Blink window...
-        # Everything evaluated is within this new module each iteration.
-        # TODO: change this to :Main once the Live module is in a real package!
-        global UserCode = Module(:LiveMain, true)
-        setparent!(UserCode, UserCode)
-        @eval UserCode include(fname::AbstractString) = Main.Base.include(@__MODULE__, fname)
-
-
-        # Automatically import Live to allow users to enable/disable Live mode:
-        Core.eval(UserCode, :(import Live))
-
-        # TODO: eventually each window should probably have its own julia process
-        if !isempty(globalFilepath)
-            cd(dirname(globalFilepath))  # Execute the code starting from the right file
-            @eval UserCode macro __FILE__() return $globalFilepath end
-        end
-
         outputlines = DefaultDict{Int,String}("")
 
         global scriptmode_enabled = false
 
-        global text = editortext
-        global parsed = parseall(editortext)
         try
+            global text = editortext
+            global parsed = parseall(editortext)
             # TODO: ooh, we should also probably swipe stdout so that it also
             # writes to the app. Perhaps in a different type of output div.
-            outs = CassetteLive.liveEvalCassette(parsed)
+            UserCode = Module(:UserCode)
+            setparent!(UserCode, UserCode)
+            outs = CassetteLive.liveEvalCassette(parsed, UserCode)
             for (l, v) in outs
                 if v === nothing continue end
                 outputlines[l] *= "$v "
@@ -187,6 +173,18 @@ function editorchange(w, globalFilepath, editortext)
         #println("ERROR: $err")
     #end
     nothing
+end
+
+# ------------ MODULES: Custom module functions ---------------------------
+
+# EWWWWWWWW, this is super hacky. This would need to be an additional C API either to allow
+# setting a module's Parent, or to allow constructing a module with a parent.
+setparent!(m::Module, p::Module) =
+    unsafe_store!(Ptr{_Module2}(pointer_from_objref(m)),
+                   _Module2(nameof(m), p), 1)
+struct _Module2
+    name
+    parent
 end
 
 # ------------------------------------------------------------------------------

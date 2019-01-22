@@ -1,4 +1,5 @@
-@time e = thunkwrap(quote
+import .LiveIDE.CassetteLive
+@time e = CassetteLive.thunkwrap(quote
     function foo(x)
         if (x > 0)
             100
@@ -24,8 +25,8 @@ end)
      foo(3)
  end
 
-_ctx = LiveCtx(metadata = CollectedOutputs([], 0))
-@time @eval Cassette.overdub($_ctx, ()->$(thunkwrap(quote
+_ctx = CassetteLive.LiveCtx(metadata = CassetteLive.CollectedOutputs([], 0))
+@time @eval Cassette.overdub($_ctx, ()->$(CassetteLive.thunkwrap(quote
     function foo(x)
         if (x > 0)
             100
@@ -39,8 +40,23 @@ _ctx = LiveCtx(metadata = CollectedOutputs([], 0))
 end)))
 _ctx.metadata.outputs
 
-_ctx = LiveCtx(metadata = CollectedOutputs([], 0))
-@time @eval Cassette.overdub($_ctx, ()->$(thunkwrap_toplevel(quote
+
+CassetteLive.thunkwrap_toplevel(quote
+    function foo(x)
+        if (x > 0)
+            100
+        elseif (x == 0)
+            x+5;
+        elseif (x < 10)
+            -x;
+        else 0 end
+     end
+     foo(3)
+end)
+
+
+_ctx = CassetteLive.LiveCtx(metadata = CassetteLive.CollectedOutputs([], 0))
+@time @eval CassetteLive.Cassette.overdub($_ctx, ()->$(CassetteLive.thunkwrap_toplevel(quote
     module Test
     module M
         struct X end
