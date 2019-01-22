@@ -4,38 +4,6 @@ using Live  # For Live-editing this file with LiveIDE.
 
 # Test with this string (Bootstrapped testing! Using parseall to test parseall! XD)
 Live.@testfile("../test/parsefile.jl")
-# https://stackoverflow.com/a/46366560/751061
-# modified from the julia source ./test/parse.jl
-function parseall(str; filename=:none)
-    str = rstrip(str)  # Prevent parsing `nothing` at end of str.
-    pos = firstindex(str)
-    exprs = []
-    parsed = nothing
-    while pos <= ncodeunits(str)
-        linenum = 1
-        nextstart = pos
-        if pos < ncodeunits(str)
-            firstnonspace = match(r"\S", str[pos:end])
-            if firstnonspace != nothing
-                nextstart = pos + firstnonspace.offset - 1
-                linenum = 1+count(c->c=='\n', str[1:nextstart])
-            end
-        end
-        push!(exprs, LineNumberNode(linenum, Symbol(filename)))
-        ex, pos = Meta.parse(str, nextstart) # returns next starting point as well as expr
-        if ex isa Expr
-            ex.head == :toplevel ? exs = ex.args : exs = [ex] #see StackOverflow comments for info
-            for e in exs
-                push!(exprs, e)
-            end
-        else  # Symbol/Literal
-            push!(exprs, ex)
-        end
-    end
-    if length(exprs) == 0
-        return nothing
-    else
-        return Expr(:block, exprs...) # convert the array of expressions
-                                      # back to a single expression
-    end
+function parseall(str)
+    return Meta.parse("begin $str end")
 end
