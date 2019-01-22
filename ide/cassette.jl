@@ -54,13 +54,13 @@ Cassette.@context LiveCtx
 
 mutable struct CollectedOutputs
     outputs
-    lastline::Int
+    linestack::Vector{Int}
 end
 function Cassette.posthook(ctx::LiveCtx, output, f::Thunk)
-    push!(ctx.metadata.outputs, (ctx.metadata.lastline => output))
+    push!(ctx.metadata.outputs, (pop!(ctx.metadata.linestack) => output))
 end
 function Cassette.execute(ctx::LiveCtx, line::LineNodeThunk)
-    ctx.metadata.lastline = line.linenode.line
+    push!(ctx.metadata.linestack, line.linenode.line)
     nothing
 end
 
@@ -122,11 +122,11 @@ end
 include("parsefile.jl")
 
 function liveEvalCassette(expr, usermodule=@__MODULE__)
-    ctx = LiveCtx(metadata = CollectedOutputs([], 0))
+    ctx = LiveCtx(metadata = CollectedOutputs([], []))
     try
     @eval usermodule $Cassette.overdub($ctx, ()->$(thunkwrap_toplevel(expr)))
     catch e
-        @warn e
+        Base.display_error(e)
     end
     return ctx.metadata.outputs
 end

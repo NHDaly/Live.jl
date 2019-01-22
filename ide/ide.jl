@@ -156,7 +156,7 @@ function editorchange(w, globalFilepath, editortext)
                 outputlines[l] *= "$v "
             end
         catch e
-            @warn e
+            Base.display_error(e)
         end
 
         # -- Display output in js window after everything is done --
