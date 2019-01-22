@@ -1,3 +1,5 @@
+# Copyright © 2018 Nathan Daly
+
 module CassetteLive
 
 using Cassette
@@ -71,13 +73,13 @@ end
 function Cassette.posthook(ctx::LiveCtx, output, f::Thunk)
     push!(ctx.metadata.outputs, (ctx.metadata.lastline => output))
 end
-function Cassette.execute(::LiveCtx, line::LineNodeThunk)
+function Cassette.execute(ctx::LiveCtx, line::LineNodeThunk)
     ctx.metadata.lastline = line.linenode.line
     nothing
 end
 
-ctx = LiveCtx(metadata = CollectedOutputs([], 0))
-@time @eval Cassette.overdub(ctx, ()->$(thunkwrap(quote
+_ctx = LiveCtx(metadata = CollectedOutputs([], 0))
+@time @eval Cassette.overdub($_ctx, ()->$(thunkwrap(quote
     function foo(x)
         if (x > 0)
             100
@@ -89,8 +91,7 @@ ctx = LiveCtx(metadata = CollectedOutputs([], 0))
     end
     foo(3)
 end)))
-
-ctx.metadata.outputs
+_ctx.metadata.outputs
 
 # ------- top level statements
 
@@ -144,8 +145,8 @@ function Cassette.execute(ctx::LiveCtx, f::ModuleThunk)::Module
     Core.eval(f.parent, f.expr)::Module
 end
 
-ctx = LiveCtx(metadata = CollectedOutputs([], 0))
-@time @eval Cassette.overdub(ctx, ()->$(thunkwrap_toplevel(quote
+_ctx = LiveCtx(metadata = CollectedOutputs([], 0))
+@time @eval Cassette.overdub($_ctx, ()->$(thunkwrap_toplevel(quote
     module Test
     module M
         struct X end
@@ -179,18 +180,29 @@ ctx = LiveCtx(metadata = CollectedOutputs([], 0))
     M.f("hey")
 end
 end)))
-@show ctx.metadata.outputs
+@show _ctx.metadata.outputs
 foo
+
+dump(quote f() = 5 end)
 
 Core.eval(Main, quote Core.eval(Main, (()->quote f2(x) = x+1 end)()) end)
 
 # -------- whole file
 
 include("parsefile.jl")
-ctx = LiveCtx(metadata = CollectedOutputs([], 0))
-@time @eval Cassette.overdub(ctx,
-    ()->$(thunkwrap_toplevel(parseall(read("$(@__DIR__)/../examples/example1.jl", String)))))
-@show ctx.metadata.outputs
+
+function liveEvalCassette(expr)
+    ctx = LiveCtx(metadata = CollectedOutputs([], 0))
+    @eval Cassette.overdub($ctx, ()->$(thunkwrap_toplevel(expr)))
+    return ctx.metadata.outputs
+end
+
+_ctx = LiveCtx(metadata = CollectedOutputs([], 0))
+@time @eval Cassette.overdub($_ctx, ()->$(thunkwrap_toplevel(
+    parseall(read("$(@__DIR__)/../examples/example2.jl", String), filename=@__FILE__))))
+@show _ctx.metadata.outputs
+
+@show liveEvalCassette(parseall(read("$(@__DIR__)/../examples/example2.jl", String), filename=@__FILE__))
 
 
 # -----------

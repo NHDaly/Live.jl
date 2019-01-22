@@ -2,6 +2,10 @@
 
 module LiveIDE
 
+cd(@__DIR__)
+using Pkg
+Pkg.activate(".")
+
 using Blink
 using DataStructures: DefaultDict
 
@@ -9,8 +13,7 @@ using Live # Define the Live macro for use in the IDE
 Live.@script(false)
 
 include("parsefile.jl")
-
-cd(@__DIR__)
+include("cassette.jl")
 
 global bg_window = nothing
 function new_window()
@@ -161,8 +164,15 @@ function editorchange(w, globalFilepath, editortext)
         try
             # TODO: ooh, we should also probably swipe stdout so that it also
             # writes to the app. Perhaps in a different type of output div.
-            evalblock(UserCode, parsed, 1, 1, outputlines; toplevel=true, keepgoing=true)
-        catch end
+            #evalblock(UserCode, parsed, 1, 1, outputlines; toplevel=true, keepgoing=true)
+            outs = CassetteLive.liveEvalCassette(parsed)
+            for (l, v) in outs
+                outputlines[l] *= "$v "
+            end
+            #@show outputlines
+        catch e
+            @warn e
+        end
 
         # -- Display output in js window after everything is done --
         maximum_or_default(itr, default) = isempty(itr) ? default : maximum(itr)

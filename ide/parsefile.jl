@@ -6,7 +6,7 @@ using Live  # For Live-editing this file with LiveIDE.
 Live.@testfile("../test/parsefile.jl")
 # https://stackoverflow.com/a/46366560/751061
 # modified from the julia source ./test/parse.jl
-function parseall(str)
+function parseall(str; filename=:none)
     str = rstrip(str)  # Prevent parsing `nothing` at end of str.
     pos = firstindex(str)
     exprs = []
@@ -21,7 +21,7 @@ function parseall(str)
                 linenum = 1+count(c->c=='\n', str[1:nextstart])
             end
         end
-        push!(exprs, LineNumberNode(linenum, :none))
+        push!(exprs, LineNumberNode(linenum, Symbol(filename)))
         ex, pos = Meta.parse(str, nextstart) # returns next starting point as well as expr
         if ex isa Expr
             ex.head == :toplevel ? exs = ex.args : exs = [ex] #see StackOverflow comments for info
