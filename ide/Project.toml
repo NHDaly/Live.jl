@@ -1,2 +1,4 @@
 [deps]
 Blink = "ad839575-38b3-5650-b840-f874b8c74a25"
+DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+Live = "9abfb5d1-b803-5d81-bdbc-6aa439176340"

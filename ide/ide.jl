@@ -1,3 +1,5 @@
+# Copyright © 2018 Nathan Daly
+
 module LiveIDE
 
 using Blink
@@ -584,9 +586,8 @@ end
 usings(m::Module) =
     ccall(:jl_module_usings, Array{Module,1}, (Any,), m)
 
-# EWWWWWWWW, this is super hacky. There's no way (that i can find) to set the parent
-# of a module, so here we're depending on the structure of the jl_module_t struct
-# to allow writing a new parent over it.
+# EWWWWWWWW, this is super hacky. This would need to be an additional C API either to allow
+# setting a module's Parent, or to allow constructing a module with a parent.
 setparent!(m::Module, p::Module) =
     unsafe_store!(Ptr{_Module2}(pointer_from_objref(m)),
                    _Module2(nameof(m), p), 1)
