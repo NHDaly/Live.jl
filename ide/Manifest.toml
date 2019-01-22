@@ -27,6 +27,12 @@ repo-url = "https://github.com/JunoLab/Blink.jl.git"
 uuid = "ad839575-38b3-5650-b840-f874b8c74a25"
 version = "0.9.0+"
 
+[[Cassette]]
+deps = ["InteractiveUtils", "LinearAlgebra", "Test"]
+git-tree-sha1 = "6eab7f863acb75eecec5f9df3d5bb0551a63fddc"
+uuid = "7057c7e9-c182-5462-911a-8362d720325c"
+version = "0.2.1"
+
 [[Compat]]
 deps = ["Base64", "Dates", "DelimitedFiles", "Distributed", "InteractiveUtils", "LibGit2", "Libdl", "LinearAlgebra", "Markdown", "Mmap", "Pkg", "Printf", "REPL", "Random", "Serialization", "SharedArrays", "Sockets", "SparseArrays", "Statistics", "Test", "UUIDs", "Unicode"]
 git-tree-sha1 = "ec61a16eed883ad0cfa002d7489b3ce6d039bb9a"
