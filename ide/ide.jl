@@ -167,6 +167,7 @@ function editorchange(w, globalFilepath, editortext)
             #evalblock(UserCode, parsed, 1, 1, outputlines; toplevel=true, keepgoing=true)
             outs = CassetteLive.liveEvalCassette(parsed)
             for (l, v) in outs
+                if v === nothing continue end
                 outputlines[l] *= "$v "
             end
             #@show outputlines

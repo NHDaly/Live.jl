@@ -110,12 +110,12 @@ function thunkwrap_toplevel(head, expr::Expr)
     #return quote Thunk(()->$(thunkwrap(head,expr)))() end
 end
 ## Valid top-level expressions:
-thunkwrap_toplevel(head::Val{:struct}, expr::Expr) = thunkwrap(quote Core.eval(@__MODULE__, $(QuoteNode(expr))) end)
-thunkwrap_toplevel(head::Val{:import}, expr::Expr) = thunkwrap(quote Core.eval(@__MODULE__, $(QuoteNode(expr))) end)
-thunkwrap_toplevel(head::Val{:using}, expr::Expr) = thunkwrap(quote Core.eval(@__MODULE__, $(QuoteNode(expr))) end)
-thunkwrap_toplevel(head::Val{:(=)}, expr::Expr) = thunkwrap(quote Core.eval(@__MODULE__, $(QuoteNode(expr))) end)
+thunkwrap_toplevel(head::Val{:struct}, expr::Expr) = thunkwrap(:( Core.eval(@__MODULE__, $(QuoteNode(expr))) ))
+thunkwrap_toplevel(head::Val{:import}, expr::Expr) = thunkwrap(:( Core.eval(@__MODULE__, $(QuoteNode(expr))) ))
+thunkwrap_toplevel(head::Val{:using}, expr::Expr) = thunkwrap(:( Core.eval(@__MODULE__, $(QuoteNode(expr))) ))
+thunkwrap_toplevel(head::Val{:(=)}, expr::Expr) = thunkwrap(:( Core.eval(@__MODULE__, $(QuoteNode(expr))) ))
 function thunkwrap_toplevel(head::Val{:function}, expr::Expr)
-    thunkwrap(quote Core.eval(@__MODULE__, $(QuoteNode(thunkwrap(expr)))) end)
+    thunkwrap(:( Core.eval(@__MODULE__, $(QuoteNode(thunkwrap(expr)))) ))
 end
 
 
@@ -193,16 +193,15 @@ include("parsefile.jl")
 
 function liveEvalCassette(expr)
     ctx = LiveCtx(metadata = CollectedOutputs([], 0))
+    try
     @eval Cassette.overdub($ctx, ()->$(thunkwrap_toplevel(expr)))
+    catch e
+        @warn e
+    end
     return ctx.metadata.outputs
 end
 
-_ctx = LiveCtx(metadata = CollectedOutputs([], 0))
-@time @eval Cassette.overdub($_ctx, ()->$(thunkwrap_toplevel(
-    parseall(read("$(@__DIR__)/../examples/example2.jl", String), filename=@__FILE__))))
-@show _ctx.metadata.outputs
-
-@show liveEvalCassette(parseall(read("$(@__DIR__)/../examples/example2.jl", String), filename=@__FILE__))
+@show liveEvalCassette(parseall(read("$(@__DIR__)/../examples/example2.jl", String)))
 
 
 # -----------
