@@ -1,4 +1,6 @@
 import .LiveIDE.CassetteLive
+import .CassetteLive.Cassette
+
 @time e = CassetteLive.thunkwrap(quote
     function foo(x)
         if (x > 0)
@@ -25,7 +27,7 @@ end)
      foo(3)
  end
 
-_ctx = CassetteLive.LiveCtx(metadata = CassetteLive.CollectedOutputs([], 0))
+_ctx = CassetteLive.LiveCtx(metadata = CassetteLive.CollectedOutputs([], []))
 @time @eval Cassette.overdub($_ctx, ()->$(CassetteLive.thunkwrap(quote
     function foo(x)
         if (x > 0)
@@ -55,7 +57,7 @@ CassetteLive.thunkwrap_toplevel(quote
 end)
 
 
-_ctx = CassetteLive.LiveCtx(metadata = CassetteLive.CollectedOutputs([], 0))
+_ctx = CassetteLive.LiveCtx(metadata = CassetteLive.CollectedOutputs([], []))
 @time @eval CassetteLive.Cassette.overdub($_ctx, ()->$(CassetteLive.thunkwrap_toplevel(quote
     module Test
     module M
