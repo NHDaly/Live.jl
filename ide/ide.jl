@@ -13,7 +13,7 @@ using Live # Define the Live macro for use in the IDE
 Live.@script(false)
 
 include("parsefile.jl")
-include("cassette.jl")
+include("evaluate.jl")
 
 global bg_window = nothing
 function new_window()
