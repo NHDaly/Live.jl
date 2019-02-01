@@ -6,7 +6,7 @@ mutable struct CollectedOutputs
     outputs
     linestack::Vector{Int}
 end
-ctx = CollectedOutputs([], [])
+ctx = CollectedOutputs([], [1])  # Initialize to start with line 1
 
 function record_thunk(f::Function)
     global ctx
@@ -22,12 +22,17 @@ function thunkwrap(head::Val{:block}, expr::Expr)
     end
     return expr
 end
+# Final leaf nodes
+function thunkwrap(head, expr::Expr)
+    return :( $record_thunk(()->$expr) )
+end
+# Special cases
 function thunkwrap(head::Val{:function}, expr::Expr)
     expr.args[2] = thunkwrap(expr.args[2])
     fname = expr.args[1].args[1]
-    return quote ($expr; $(thunkwrap(String(fname)))) end
+    return :( ($expr; $(thunkwrap(String(fname)))) )
     # return expr
-    #return quote record_thunk(()->$expr) end
+    #return :( record_thunk(()->$expr) )
 end
 function thunkwrap(head::Val{:(=)}, expr::Expr)
     # Check for `f(x) = x` style function definition
@@ -43,17 +48,57 @@ function thunkwrap(head::Union{Val{:if},Val{:elseif}}, expr::Expr)
     end
     return expr
 end
-# Final leaf nodes
-function thunkwrap(head, expr::Expr)
-    return quote $record_thunk(()->$expr) end
+
+# Loops
+function thunkwrap(head::Val{:while}, expr::Expr)
+    # Thunkwrap all exprs
+    for (i,node) in enumerate(expr.args)
+        expr.args[i] = thunkwrap(node)
+    end
+
+    # Push the last line on again, so it lasts throughout the loop
+    startline_var = gensym(:startline)
+    preloop = :($startline_var = $LiveEval.ctx.linestack[end])
+    pushline = :(push!($LiveEval.ctx.linestack, $startline_var))
+    #expr.args[1] = :( $pushline; $(expr.args[1]) )
+
+    #loop_outputs = CollectedOutputs[]
+    ##output_channels = Channel{CollectedOutputs}[]
+    #outputs_var = gensym(:outputs)
+    #startloop = :($outputs_var = $CollectedOutputs([], [1]))
+    #endloop   = :($((o)->push!(loop_outputs, o))($outputs_var))
+    ##expr.args[2].args = [startloop, expr.args[2].args..., endloop]
+    #expr.args[2].args = [pushline, expr.args[2].args...]
+
+    expr.args[2].args = [expr.args[2].args..., pushline]
+    return :($preloop; $expr)
 end
+function thunkwrap(head::Val{:for}, expr::Expr)
+    # Thunkwrap body
+    expr.args[2] = thunkwrap(expr.args[2])
+
+    # Thunkwrap the iteration variable (need to do this manually, unlike while-loop)
+    println = thunkwrap(expr.args[1].args[1])
+
+    # Push the last line on again, so it lasts throughout the loop
+    startline_var = gensym(:startline)
+    preloop = :($startline_var = $LiveEval.ctx.linestack[end])
+    # This is harder cause the for loop runs exactly the right amount of times, so i only
+    # want to push n-1 times
+    pushline = :(push!($LiveEval.ctx.linestack, $startline_var))
+    popline = :(pop!($LiveEval.ctx.linestack))
+
+    expr.args[2].args = [pushline, println, expr.args[2].args...]
+    return :($preloop; $popline; $expr)
+end
+
 
 function record_thunk(linenode::LineNumberNode)
     push!(ctx.linestack, linenode.line)
 end
 thunkwrap(linenode::LineNumberNode) =
-                quote $record_thunk(LineNumberNode($(linenode.line), $(string(linenode.file)))) end
-thunkwrap(literal) = quote $record_thunk(()->$literal) end
+                :( $record_thunk(LineNumberNode($(linenode.line), $(string(linenode.file)))) )
+thunkwrap(literal) = :( $record_thunk(()->$literal) )
 
 
 

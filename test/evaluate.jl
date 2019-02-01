@@ -169,3 +169,31 @@ end
              X()
         end, usermodule), [(2=>"X"), (3=>usermodule.X())])
 end
+
+@testset "loop" begin
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+            function f()
+                x = 0
+                while x < 2
+                    x+=1
+                end
+            end
+            f()
+        end), [(2=>"f"), (3=>0),
+                   (4=>true), (4=>true), (4=>false),
+                       (5=>1), (5=>2),
+               (8=>nothing)])
+
+
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+            function f()
+                for x in 1:2
+                    x
+                end
+            end
+            f()
+        end), [(2=>"f"),
+                   (3=>1), (3=>2),
+                       (4=>1), (4=>2),
+               (7=>nothing)])
+end
