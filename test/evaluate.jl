@@ -205,3 +205,12 @@ end
              end
         end), [(2=>"f1")])
 end
+
+@testset "Functors" begin
+    LiveEval.thunkwrap(quote
+            struct X end
+            function (x::X)(n)
+                n
+            end
+        end)
+end

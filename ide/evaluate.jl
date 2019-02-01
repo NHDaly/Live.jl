@@ -48,7 +48,7 @@ function thunkwrap(head::Val{:function}, expr::Expr)
     # Add printing the function call w/ args to the body
     if length(expr.args) >= 2
         argvals = callsig.args[2:end]
-        calc_callval_expr = :($(String(fname))*"($(join([$(argvals...)], ',')))")
+        calc_callval_expr = :($(string(fname))*"($(join([$(argvals...)], ',')))")
         # Print it onto the first line of the function definition, assigned to a global below.
         pushfirst!(expr.args[2].args, :(
             push!($ctx.outputs, ($startline_var => $calc_callval_expr));
@@ -57,15 +57,18 @@ function thunkwrap(head::Val{:function}, expr::Expr)
 
     # Record the function definition starting line to later print the function call
     return :($startline_var = $ctx.linestack[end];
-             $expr; $(thunkwrap(String(fname))) )
+             $expr; $(thunkwrap(string(fname))) )
 end
 function thunkwrap(head::Val{:(=)}, expr::Expr)
-    # Check for `f(x) = x` style function definition
-    if (expr.args[1] isa Expr && expr.args[1].head == :call)
-        return thunkwrap(Val(:function), expr)
+    @match expr begin
+        # Check for `f(x) = x` style function definition
+        Expr(:call, _) => return thunkwrap(Val(:function), expr)
+        # otherwise
+        _ => begin
+            expr.args[2] = thunkwrap(expr.args[2])
+            return expr
+        end
     end
-    expr.args[2] = thunkwrap(expr.args[2])
-    return expr
 end
 function thunkwrap(head::Union{Val{:if},Val{:elseif}}, expr::Expr)
     for (i,node) in enumerate(expr.args)
