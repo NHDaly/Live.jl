@@ -215,8 +215,25 @@ end
         end)
 end
 
-LiveEval.thunkwrap(quote
-    for x in 1:5
-        x > 2 && break
-    end
-end)
+@testset "break/continue" begin
+    LiveEval.thunkwrap(quote
+        for x in 1:5
+            x > 2 && break
+        end
+    end)
+end
+
+@testset "optional args" begin
+    LiveEval.thunkwrap(quote
+        function f_optional(a::Int, b = 5)
+            (a, b)
+        end
+    end)
+    # calling it
+    LiveEval.thunkwrap(quote
+        function f_optional(a::Int, b=5)
+            (a, b)
+        end
+        f_optional(5, "HI")
+    end)
+end

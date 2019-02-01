@@ -49,7 +49,7 @@ function thunkwrap(head::Val{:function}, expr::Expr)
     startline_var = gensym("$(fname)_startline")
     # Add printing the function call w/ args to the body
     if length(expr.args) >= 2
-        argvals = callsig.args[2:end]
+        argvals = argnames(callsig)
         calc_callval_expr = :($(string(fname))*"($(join([$(argvals...)], ',')))")
         # Print it onto the first line of the function definition, assigned to a global below.
         pushfirst!(expr.args[2].args, :(
@@ -61,6 +61,14 @@ function thunkwrap(head::Val{:function}, expr::Expr)
     return :($startline_var = $ctx.linestack[end];
              $expr; $(thunkwrap(string(fname))) )
 end
+
+argnames(fcall) = [argname(a) for a in fcall.args[2:end]]
+argname(a) = @match a begin
+    Expr(_, [name, _]) => name
+    #Expr(:(::), _) => name
+    value => value
+end
+
 function thunkwrap(head::Val{:(=)}, expr::Expr)
     @match expr begin
         # Check for `f(x) = x` style function definition
