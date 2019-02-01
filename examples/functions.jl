@@ -29,7 +29,6 @@ end
 Live.@test f2(2, 3.0)
 
 
-
 # Optional args
 Live.@test f_optional(5, "HI")
 Live.@test f_optional(5)
@@ -44,4 +43,26 @@ Live.@test f_key(5, b=2)
 function f_key(a::Int; b = 5)
     (a, b)
 end
+
+
+
+# Recursive
+# TODO: something screwy with printing, after changes
+Live.@test fact(3)
+function fact(x)
+    x <= 1 && return 1
+    return x * fact(x-1)
+end
+
+Live.@test fact_explicit(3)
+function fact_explicit(x)
+    if x <= 1
+        out = 1
+        return out
+    end
+    v = fact_explicit(x-1)
+    v1 = x*v
+    return v
+end
+
 

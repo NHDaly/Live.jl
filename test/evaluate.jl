@@ -245,3 +245,12 @@ end
         f_kw(2)
     end)
 end
+
+@testset "undefined" begin
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+             function f()
+                 __undefined__
+             end
+             Live.@test f()
+        end), [(2=>"f")])
+end
