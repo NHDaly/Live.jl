@@ -6,7 +6,6 @@ function helloNathan()
    nameindex = match(r"World", s).offset
    s[1:nameindex-1]*"Nathan"
 end
-
 Live.@test helloNathan()
 
 function notTested(x)

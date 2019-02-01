@@ -14,7 +14,6 @@ Live.@script(false)
 
 include("parsefile.jl")
 include("evaluate.jl")
-include("live.jl")
 
 global bg_window = nothing
 function new_window()

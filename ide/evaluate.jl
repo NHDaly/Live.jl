@@ -120,12 +120,32 @@ end
 thunkwrap(head::Val{:import}, expr::Expr) = expr
 thunkwrap(head::Val{:using}, expr::Expr) = expr
 thunkwrap(head::Val{:include}, expr::Expr) = expr
+struct LiveIDEFile
+    filename::String
+end
+function thunkwrap(head::Val{:macrocall}, expr::Expr)
+    if length(expr.args) >= 2
+        expr.args[2] = LineNumberNode(expr.args[2].line, LiveIDEFile(":none:"))
+    end
+    # Complicated return value to wrap without recursion
+    val = gensym()
+    :( $val = $expr; $(thunkwrap(val)) )
+end
+
+# -------- Live functions
+using Live
+
+include("live.jl")
+
+#
+#function thunkwrap(head::Val{:macrocall}, expr::Expr)
+#
+#end
+
 
 # -------- whole file
 
 include("parsefile.jl")
-
-using Live
 
 function liveEval(expr, usermodule=@__MODULE__)
     @assert expr.head == :block
@@ -141,16 +161,15 @@ function liveEval(expr, usermodule=@__MODULE__)
             #Base.display_error(e)
         end
     end
-    @eval usermodule $run_all_livetests()
+    run_all_livetests(usermodule)
     return ctx.outputs
 end
 
-function run_all_livetests()
+function run_all_livetests(usermodule)
     for testthunk in Live.testthunks
-        testthunk()
+        @eval usermodule $testthunk()
     end
 end
-
 # -----------
 
 end

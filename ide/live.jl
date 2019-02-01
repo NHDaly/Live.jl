@@ -4,7 +4,7 @@
     end
 
     # Run the function!
-    function testcall(fcall, linenode)
+    function testcall(fcall, linenode::$LiveIDEFile)
         quote
             function live_test()
                 $(esc(fcall))
@@ -15,19 +15,19 @@
     end
 
     # Include the testfile
-    function testfile_call(files)
+    function testfile_call(files, linenode::$LiveIDEFile)
         escfiles = [esc(f) for f in files]
         quote
             for f in [$(escfiles...)]
-                push!(Live.testthunks, ()->begin
+                push!($Live.testthunks, ()->begin
                  @show f
-                 include(f); nothing end)
+                 (@__MODULE__).include(f); nothing end)
             end
         end
     end
 
     # Toggle script mode
-    function script_call(enable)
+    function script_call(enable, linenode::$LiveIDEFile)
         # TODO
     end
 end
