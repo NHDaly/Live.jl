@@ -214,3 +214,9 @@ end
             end
         end)
 end
+
+LiveEval.thunkwrap(quote
+    for x in 1:5
+        x > 2 && break
+    end
+end)

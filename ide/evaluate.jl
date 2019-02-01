@@ -10,11 +10,13 @@ mutable struct CollectedOutputs
 end
 ctx = CollectedOutputs([], [1])  # Initialize to start with line 1
 
-function record_thunk(f::Function)
+function record_thunk(expr)
     global ctx
-    val = f()
-    push!(ctx.outputs, (pop!(ctx.linestack) => val))
-    val
+    quote
+        val = $expr
+        push!($ctx.outputs, (pop!($ctx.linestack) => val))
+        val
+    end
 end
 
 thunkwrap(expr::Expr) = thunkwrap(Val(expr.head), expr)
@@ -26,7 +28,7 @@ function thunkwrap(head::Val{:block}, expr::Expr)
 end
 # Final leaf nodes
 function thunkwrap(head, expr::Expr)
-    return :( $record_thunk(()->$expr) )
+    return record_thunk(expr)
 end
 # Special cases
 function thunkwrap(head::Val{:function}, expr::Expr)
@@ -121,12 +123,12 @@ function thunkwrap(head::Val{:for}, expr::Expr)
 end
 
 
-function record_thunk(linenode::LineNumberNode)
+function record_linenode(linenode::LineNumberNode)
     push!(ctx.linestack, linenode.line)
 end
 thunkwrap(linenode::LineNumberNode) =
-                :( $record_thunk(LineNumberNode($(linenode.line), $(string(linenode.file)))) )
-thunkwrap(literal) = :( $record_thunk(()->$literal) )
+                :( $record_linenode(LineNumberNode($(linenode.line), $(string(linenode.file)))) )
+thunkwrap(literal) = record_thunk(literal)
 
 
 
@@ -147,6 +149,7 @@ end
 # Ignore these toplevel expressions
 thunkwrap(head::Val{:import}, expr::Expr) = expr
 thunkwrap(head::Val{:using}, expr::Expr) = expr
+thunkwrap(head::Val{:export}, expr::Expr) = expr
 thunkwrap(head::Val{:include}, expr::Expr) = expr
 struct LiveIDEFile
     filename::String
