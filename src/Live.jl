@@ -6,45 +6,25 @@
 module Live
 
 """
-    Live.@script(enable=true)
-
-Enable script-mode in the LiveIDE, causing it to display live output for each
-subsequent line of this file. Calling `Live.script(false)` will disable output.
-"""
-macro script(enable=true)
-    ScriptLine(enable)
-end
-# This struct tells LiveIDE to enable/disable script-mode.
-struct ScriptLine
-    enabled::Bool
-end
-
-"""
     Live.@test
 
 This is the main interface for Live: Live.@test
-Use it to test a function in the LiveIDE by annotating the function with this
-macro on its own line:
+Use it to test a function in the LiveIDE. Can be written anywhere.
 
 ```julia
 using Live
 
-Live.@test a=5 b=zeros(3)
 function foo(a,b)
     # ...
 end
+Live.@test foo(5, zeros(3))
 ```
 """
-macro test(args...)
-    TestLine(args, __source__)
+macro test(fcall)
+    testcall(fcall, __source__)
 end
-
-# This struct is used by the IDE to pass a context (args) into a function when
-# executing it via Live.@test
-struct TestLine
-    args
-    lineNode::LineNumberNode
-end
+# Do nothing by default
+function testcall(fcall, linenode) end
 
 """
     Live.@testfile(testfile)
@@ -78,52 +58,20 @@ end
 ```
 """
 macro testfile(files...)
-    TestFileLine(files, __source__)
+    testfile_call(files)
 end
+function testfile_call(files) end
 
-struct TestFileLine
-    files
-    lineNode::LineNumberNode
-end
 
 """
-    Live.@tested(functionname)
+    Live.@script(enable=true)
 
-Record a @test's or @testset's calls to `functionname` for testing that function
-in LiveIDE.
-
-If the provided function (`functionname`) is annotated with a `Live.@testfile`
-that includes this test file, then any time that function is invoked from this
-@test or @testset, the parameters passed to that function will be available as
-inputs for live debug output in the LiveIDE where that function is defined.
-
-See also Live.@testfile.
-
-```julia
-# src/foo.jl
-
-Live.@testfile("../tests/foo.jl")
-function foo(a,b)
-    # ...
-end
-
-# ----
-# tests/foo.jl
-
-Live.@tested(foo)
-@testset "foo val" begin
- x = 1
- out = foo(x, x+1)
- @test out.val == true
-end
-```
+Enable script-mode in the LiveIDE, causing it to display live output for each
+subsequent line of this file. Calling `Live.script(false)` will disable output.
 """
-macro tested(functionname)
-    TestedLine(functionname)
+macro script(enable=true)
+    script_call(enable)
 end
-
-struct TestedLine
-    functionname
-end
+function script_call(enable) end
 
 end

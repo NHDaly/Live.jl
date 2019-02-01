@@ -119,14 +119,20 @@ end
 # Ignore these toplevel expressions
 thunkwrap(head::Val{:import}, expr::Expr) = expr
 thunkwrap(head::Val{:using}, expr::Expr) = expr
+thunkwrap(head::Val{:include}, expr::Expr) = expr
 
 # -------- whole file
 
 include("parsefile.jl")
 
+using Live
+
 function liveEval(expr, usermodule=@__MODULE__)
     @assert expr.head == :block
     global ctx = CollectedOutputs([], [1]) # Initialize to start on line 1
+
+    Live.reset_testfuncs()
+
     for toplevel_expr in LiveEval.thunkwrap.(expr.args)
         try
             Core.eval(usermodule, toplevel_expr)
@@ -135,9 +141,15 @@ function liveEval(expr, usermodule=@__MODULE__)
             #Base.display_error(e)
         end
     end
+    @eval usermodule $run_all_livetests()
     return ctx.outputs
 end
 
+function run_all_livetests()
+    for testthunk in Live.testthunks
+        testthunk()
+    end
+end
 
 # -----------
 
