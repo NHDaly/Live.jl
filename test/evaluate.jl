@@ -1,7 +1,7 @@
-import .LiveIDE.CassetteLive
-import .CassetteLive.Cassette
+import .LiveIDE.LiveEval
+import .LiveEval.Cassette
 
-@time e = CassetteLive.thunkwrap(quote
+@time e = LiveEval.thunkwrap(quote
     function foo(x)
         if (x > 0)
             100
@@ -27,11 +27,11 @@ end)
      foo(3)
  end
 
-_ctx = CassetteLive.LiveCtx(metadata = CassetteLive.CollectedOutputs([], []))
-@time @eval Cassette.overdub($_ctx, ()->$(CassetteLive.thunkwrap(quote
+#_ctx = LiveEval.LiveCtx(metadata = LiveEval.CollectedOutputs([], []))
+@time eval(LiveEval.thunkwrap(quote
     function foo(x)
         if (x > 0)
-            100
+            102
         elseif (x == 0)
             x+5;
         elseif (x < 10)
@@ -39,11 +39,11 @@ _ctx = CassetteLive.LiveCtx(metadata = CassetteLive.CollectedOutputs([], []))
         else 0 end
     end
     foo(3)
-end)))
-_ctx.metadata.outputs
+end))
+LiveEval.ctx.outputs
 
 
-CassetteLive.thunkwrap_toplevel(quote
+LiveEval.thunkwrap_toplevel(quote
     function foo(x)
         if (x > 0)
             100
@@ -56,43 +56,84 @@ CassetteLive.thunkwrap_toplevel(quote
      foo(3)
 end)
 
-
-_ctx = CassetteLive.LiveCtx(metadata = CassetteLive.CollectedOutputs([], []))
-@time @eval CassetteLive.Cassette.overdub($_ctx, ()->$(CassetteLive.thunkwrap_toplevel(quote
-    module Test
-    module M
-        struct X end
-        G = 20
-        G + 5
-        module Inner
-            println("HI")
-            x = 10
+# --------- Toplevel tests ----------
+# A single module
+@eval LiveEval ctx = CollectedOutputs([], [])
+@time for toplevel_expr in LiveEval.thunkwrap.((quote
+        module Test
+            struct X end
+            @show X()
+            f() = 5
+            f()
         end
-        function f(x) x end
-        f(2)
-        println(f)
-        println(typeof(f).name.module)
-    end
-    M.G + 100
-    M.Inner.x
-    function foo(x)
-        y = x
-        if (y > 0)
-            function helper(y)
-              y+100
-            end
-            helper(10)
-        elseif (x == 0)
-            x+5;
-        elseif (x < 10)
-            -x;
-        else 0 end
-    end
-    foo(3)
-    M.f("hey")
+    end).args)
+    eval(toplevel_expr)
 end
-end)))
-@show _ctx.metadata.outputs
+LiveEval.ctx.outputs
+
+# Embedded Modules
+@eval LiveEval ctx = CollectedOutputs([], [])
+@time for toplevel_expr in LiveEval.thunkwrap.((quote
+        module Test
+            struct X end
+            @show X()
+            f() = 5
+            f()
+            module Inner
+                struct X end
+                @show X()
+                f() = 5
+                f()
+            end
+        end
+    end).args)
+    eval(toplevel_expr)
+end
+LiveEval.ctx.outputs
+
+3
+
+#_ctx = LiveEval.LiveCtx(metadata = LiveEval.CollectedOutputs([], []))
+#@time @eval LiveEval.Cassette.overdub($_ctx, ()->$(LiveEval.thunkwrap_toplevel(quote
+@time for toplevel_expr in LiveEval.thunkwrap_toplevel(quote
+        module Test
+        module M
+            struct X end
+            G = 20
+            G + 5
+            module Inner
+                println("HI")
+                x = 10
+            end
+            function f(x) x end
+            f(2)
+            println(f)
+            println(typeof(f).name.module)
+        end
+        M.G + 100
+        M.Inner.x
+        function foo(x)
+            y = x
+            if (y > 0)
+                function helper(y)
+                  y+100
+                end
+                helper(10)
+            elseif (x == 0)
+                x+5;
+            elseif (x < 10)
+                -x;
+            else 0 end
+        end
+        foo(3)
+        M.f("hey")
+        struct X end
+        X()
+    end
+    end).args
+    eval(toplevel_expr)
+end
+@show LiveEval.ctx.outputs
 foo
 
 dump(quote f() = 5 end)
