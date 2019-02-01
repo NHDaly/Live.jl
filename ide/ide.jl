@@ -94,7 +94,8 @@ function new_window()
     js(w, Blink.JSString(raw"""
         texteditor = CodeMirror.fromTextArea($("#text-editor")[0], {
             lineNumbers: true,
-            mode:  "julia"
+            mode:  "julia",
+            indentUnit: 4
         });
         undefined;  // Don't return the CodeMirror object
      """))
