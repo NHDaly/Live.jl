@@ -27,7 +27,6 @@ end)
      foo(3)
  end
 
-#_ctx = LiveEval.LiveCtx(metadata = LiveEval.CollectedOutputs([], []))
 @time eval(LiveEval.thunkwrap(quote
     function foo(x)
         if (x > 0)
@@ -43,7 +42,7 @@ end))
 LiveEval.ctx.outputs
 
 
-LiveEval.thunkwrap_toplevel(quote
+LiveEval.thunkwrap(quote
     function foo(x)
         if (x > 0)
             100
@@ -91,11 +90,7 @@ LiveEval.ctx.outputs
 end
 LiveEval.ctx.outputs
 
-3
-
-#_ctx = LiveEval.LiveCtx(metadata = LiveEval.CollectedOutputs([], []))
-#@time @eval LiveEval.Cassette.overdub($_ctx, ()->$(LiveEval.thunkwrap_toplevel(quote
-@time for toplevel_expr in LiveEval.thunkwrap_toplevel(quote
+@time for toplevel_expr in LiveEval.thunkwrap(quote
         module Test
         module M
             struct X end
@@ -139,3 +134,5 @@ foo
 dump(quote f() = 5 end)
 
 Core.eval(Main, quote Core.eval(Main, (()->quote f2(x) = x+1 end)()) end)
+
+liveEval(quote module M x = 6 end end)
