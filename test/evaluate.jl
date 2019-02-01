@@ -197,3 +197,11 @@ end
                        (4=>1), (4=>2),
                (7=>nothing)])
 end
+
+@testset "where T" begin
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+             function f1(x::T) where T
+                 x+1
+             end
+        end), [(2=>"f1")])
+end
