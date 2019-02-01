@@ -237,3 +237,11 @@ end
         f_optional(5, "HI")
     end)
 end
+@testset "kwargs" begin
+    LiveEval.thunkwrap(quote
+        function f_kw(a::Int, b=5; k=2, k1=3)
+            (a, b)
+        end
+        f_kw(2)
+    end)
+end

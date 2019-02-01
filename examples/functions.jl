@@ -32,7 +32,16 @@ Live.@test f2(2, 3.0)
 
 # Optional args
 Live.@test f_optional(5, "HI")
+Live.@test f_optional(5)
 function f_optional(a::Int, b = 5)
+    (a, b)
+end
+
+
+# Keyword args
+Live.@test f_key(1)
+Live.@test f_key(5, b=2)
+function f_key(a::Int; b = 5)
     (a, b)
 end
 

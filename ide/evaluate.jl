@@ -62,11 +62,19 @@ function thunkwrap(head::Val{:function}, expr::Expr)
              $expr; $(thunkwrap(string(fname))) )
 end
 
-argnames(fcall) = [argname(a) for a in fcall.args[2:end]]
-argname(a) = @match a begin
-    Expr(_, [name, _]) => name
-    #Expr(:(::), _) => name
-    value => value
+argnames(fcall::Expr) = argnames(fcall.args[2:end])
+function argnames(args::Array)
+    out = []
+    kwargs_out = []
+    for a in args
+        @match a begin
+            # Note: Order is significant here.
+            Expr(:parameters, kwargs) => (kwargs_out = argnames(kwargs))
+            Expr(_, [name, _]) => push!(out, name)
+            value => push!(out, value)
+        end
+    end
+    return [out..., kwargs_out...]
 end
 
 function thunkwrap(head::Val{:(=)}, expr::Expr)
