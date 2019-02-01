@@ -21,14 +21,10 @@ Live.@test foo(5, zeros(3))
 ```
 """
 macro test(fcall)
-    testcall(fcall, __source__.file)
+    testcall(fcall, __source__.file, __source__.line)
 end
 # Do nothing by default
-function testcall(fcall, linenode)
-    @show fcall
-    @show linenode
-    nothing
-end
+function testcall(fcall, file, line) end
 
 """
     Live.@testfile(testfile)
@@ -62,9 +58,9 @@ end
 ```
 """
 macro testfile(files...)
-    testfile_call(files, __source__.file)
+    testfile_call(files, __source__.file, __source__.line)
 end
-function testfile_call(files, linenode) end
+function testfile_call(files, file, line) end
 
 
 """
@@ -74,8 +70,8 @@ Enable script-mode in the LiveIDE, causing it to display live output for each
 subsequent line of this file. Calling `Live.script(false)` will disable output.
 """
 macro script(enable=true)
-    script_call(enable, __source__.file)
+    script_call(enable, __source__.file, __source__.line)
 end
-function script_call(enable, linenode) end
+function script_call(enable, file, line) end
 
 end
