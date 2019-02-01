@@ -1,13 +1,11 @@
 using Test
-#include("$(homedir())/Documents/Live/examples/selfTestedFile.jl")
-
-println("HI! Module: $(@__MODULE__)")
+#include("$(homedir())/Documents/Live/examples/testedfile.jl")
 
 @testset "foo" begin
-  Test.@test foo(2,3) == (true,false)
+  Test.@test foo() == (true,false)
 end
 
-@testset "foo" begin
-  Test.@test foo1(2,3) == (true,false)
-  Test.@test foo1(3,3) == (true,false)
+@testset "foo1" begin
+  Test.@test foo1(2, 3) == 5
+  Test.@test foo1(3, 3) == 0
 end
