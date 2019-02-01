@@ -150,7 +150,7 @@ function editorchange(w, globalFilepath, editortext)
             # writes to the app. Perhaps in a different type of output div.
             UserCode = Module(:UserCode)
             setparent!(UserCode, UserCode)
-            outs = CassetteLive.liveEvalCassette(parsed, UserCode)
+            outs = LiveEval.liveEval(parsed, UserCode)
             for (l, v) in outs
                 if v === nothing continue end
                 outputlines[l] *= "$v "
