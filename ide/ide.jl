@@ -135,9 +135,6 @@ function setOutputText(linesdict, line, text)
     end
 end
 
-is_function_testline_request(_) = false
-is_function_testline_request(_::Live.TestLine) = true
-
 function editorchange(w, globalFilepath, editortext)
     #try  # So errors don't crash my Blink window...
         outputlines = DefaultDict{Int,String}("")
@@ -150,6 +147,9 @@ function editorchange(w, globalFilepath, editortext)
             # TODO: ooh, we should also probably swipe stdout so that it also
             # writes to the app. Perhaps in a different type of output div.
             UserCode = Module(:UserCode)
+            @eval UserCode import Base: eval
+            #@eval UserCode include(fname::AbstractString) = Main.Base.include(@__MODULE__, Base.relpath(fname, @__FILE__))
+            @eval UserCode include(fname::AbstractString) = Main.Base.include(@__MODULE__, fname)
             setparent!(UserCode, UserCode)
             outs = LiveEval.liveEval(parsed, UserCode)
             for (l, v) in outs

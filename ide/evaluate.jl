@@ -28,11 +28,25 @@ function thunkwrap(head, expr::Expr)
 end
 # Special cases
 function thunkwrap(head::Val{:function}, expr::Expr)
-    expr.args[2] = thunkwrap(expr.args[2])
+    if length(expr.args) >= 2
+        expr.args[2] = thunkwrap(expr.args[2])
+    end
     fname = expr.args[1].args[1]
-    return :( ($expr; $(thunkwrap(String(fname)))) )
-    # return expr
-    #return :( record_thunk(()->$expr) )
+
+    startline_var = gensym("$(fname)_startline")
+    # Add printing the function call w/ args to the body
+    if length(expr.args) >= 2
+        argvals = expr.args[1].args[2:end]
+        calc_callval_expr = :($(String(fname))*"($(join([$(argvals...)], ',')))")
+        # Print it onto the first line of the function definition, assigned to a global below.
+        pushfirst!(expr.args[2].args, :(
+            push!($ctx.outputs, ($startline_var => $calc_callval_expr));
+        ))
+    end
+
+    # Record the function definition starting line to later print the function call
+    return :(const $startline_var = $ctx.linestack[end];
+             $expr; $(thunkwrap(String(fname))) )
 end
 function thunkwrap(head::Val{:(=)}, expr::Expr)
     # Check for `f(x) = x` style function definition
@@ -119,6 +133,29 @@ end
 # Ignore these toplevel expressions
 thunkwrap(head::Val{:import}, expr::Expr) = expr
 thunkwrap(head::Val{:using}, expr::Expr) = expr
+thunkwrap(head::Val{:include}, expr::Expr) = expr
+struct LiveIDEFile
+    filename::String
+end
+function thunkwrap(head::Val{:macrocall}, expr::Expr)
+    if length(expr.args) >= 2
+        expr.args[2] = LineNumberNode(expr.args[2].line, LiveIDEFile(":none:"))
+    end
+    # Complicated return value to wrap without recursion
+    val = gensym()
+    :( $val = $expr; $(thunkwrap(val)) )
+end
+
+# -------- Live functions
+using Live
+
+include("live.jl")
+
+#
+#function thunkwrap(head::Val{:macrocall}, expr::Expr)
+#
+#end
+
 
 # -------- whole file
 
@@ -127,6 +164,9 @@ include("parsefile.jl")
 function liveEval(expr, usermodule=@__MODULE__)
     @assert expr.head == :block
     global ctx = CollectedOutputs([], [1]) # Initialize to start on line 1
+
+    Live.reset_testfuncs()
+
     for toplevel_expr in LiveEval.thunkwrap.(expr.args)
         try
             Core.eval(usermodule, toplevel_expr)
@@ -135,10 +175,15 @@ function liveEval(expr, usermodule=@__MODULE__)
             #Base.display_error(e)
         end
     end
+    run_all_livetests(usermodule)
     return ctx.outputs
 end
 
-
+function run_all_livetests(usermodule)
+    for testthunk in Live.testthunks
+        @eval usermodule $testthunk()
+    end
+end
 # -----------
 
 end
