@@ -82,13 +82,14 @@ include("parsefile.jl")
 function liveEval(expr, usermodule=@__MODULE__)
     @assert expr.head == :block
     global ctx = CollectedOutputs([], [1]) # Initialize to start on line 1
-    #try
-        for toplevel_expr in LiveEval.thunkwrap.(expr.args)
+    for toplevel_expr in LiveEval.thunkwrap.(expr.args)
+        try
             Core.eval(usermodule, toplevel_expr)
+        catch e
+            push!(ctx.outputs, (pop!(ctx.linestack) => e))
+            #Base.display_error(e)
         end
-    #catch e
-    #    Base.display_error(e)
-    #end
+    end
     return ctx.outputs
 end
 
