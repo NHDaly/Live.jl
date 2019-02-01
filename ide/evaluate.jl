@@ -24,15 +24,18 @@ function thunkwrap(head::Val{:block}, expr::Expr)
 end
 function thunkwrap(head::Val{:function}, expr::Expr)
     expr.args[2] = thunkwrap(expr.args[2])
-   fname = expr.args[1].args[1]
+    fname = expr.args[1].args[1]
     return quote ($expr; $(thunkwrap(String(fname)))) end
     # return expr
     #return quote record_thunk(()->$expr) end
 end
 function thunkwrap(head::Val{:(=)}, expr::Expr)
+    # Check for `f(x) = x` style function definition
+    if (expr.args[1] isa Expr && expr.args[1].head == :call)
+        return thunkwrap(Val(:function), expr)
+    end
     expr.args[2] = thunkwrap(expr.args[2])
     return expr
-    #return quote record_thunk(()->$expr) end
 end
 function thunkwrap(head::Union{Val{:if},Val{:elseif}}, expr::Expr)
     for (i,node) in enumerate(expr.args)
@@ -78,7 +81,7 @@ include("parsefile.jl")
 
 function liveEval(expr, usermodule=@__MODULE__)
     @assert expr.head == :block
-    global ctx = CollectedOutputs([], [])
+    global ctx = CollectedOutputs([], [1]) # Initialize to start on line 1
     #try
         for toplevel_expr in LiveEval.thunkwrap.(expr.args)
             Core.eval(usermodule, toplevel_expr)

@@ -1,5 +1,6 @@
-import .LiveIDE.LiveEval
-import .LiveEval.Cassette
+include("../ide/evaluate.jl")
+
+using Test
 
 @time e = LiveEval.thunkwrap(quote
     function foo(x)
@@ -135,4 +136,36 @@ dump(quote f() = 5 end)
 
 Core.eval(Main, quote Core.eval(Main, (()->quote f2(x) = x+1 end)()) end)
 
-liveEval(quote module M x = 6 end end)
+LiveEval.liveEval(quote module M x = 6 end end)
+
+# ------------ Tests -----------
+
+# This is needed because the `@test` somehow messes with the line numbers.
+function testLiveEval(curline::Int, outs::Array, expected::Array)
+    expected = [(curline + l-1) => o for (l,o) in expected]
+    @test Set(outs) == Set(expected)
+end
+
+@testset "simple" begin
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote x=5 end), [(1 => 5)])
+
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+             f() = 2
+             f()
+             function f1(x) x+1 end
+             f1(5)
+        end), [(2=>"f"), (2=>2), (3=>2),
+               (4=>"f1"), (4=>6), (5=>6)])
+end
+@testset "UserModule" begin
+    usermodule = Module(:UserModule)
+
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+            module M x = 6 end
+        end, usermodule), [(2=>usermodule.M), (2 => 6)])
+
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+             struct X end
+             X()
+        end, usermodule), [(2=>"X"), (3=>usermodule.X())])
+end
