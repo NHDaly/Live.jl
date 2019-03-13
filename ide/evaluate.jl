@@ -196,6 +196,14 @@ struct LiveIDEFile
     filename::String
 end
 function thunkwrap(head::Val{:macrocall}, expr::Expr)
+    # -- Some macros we want to wrap --
+    @match expr.args[1] begin
+        Expr(:., [_, QuoteNode(Symbol("@eval"))]) => thunkwrap(Val(:eval), expr)
+        Symbol("@eval") => thunkwrap(Val(:eval), expr)
+        _ => nothing
+    end
+    # -----------------
+
     if length(expr.args) >= 2
         expr.args[2] = LineNumberNode(expr.args[2].line, LiveIDEFile(":none:"))
     end
@@ -203,6 +211,15 @@ function thunkwrap(head::Val{:macrocall}, expr::Expr)
     val = gensym()
     :( $val = $expr; $(thunkwrap(val)) )
 end
+
+function thunkwrap(::Val{:eval}, expr::Expr)  # macrocall
+    # Wrap any inner blocks in a call to @eval
+    if expr.args[3] isa Expr
+        expr.args[3] = thunkwrap(expr.args[3])
+    end
+    return expr
+end
+
 
 # -------- Live functions
 using Live
