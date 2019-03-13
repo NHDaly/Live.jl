@@ -262,3 +262,22 @@ end
              Live.@test f()
         end), [(2=>"f"), (2=>"f()"), (5=>nothing), (5=>UndefVarError(:__undefined__))])
 end
+
+@testset "try/catch" begin
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+        try
+            2
+        catch end
+    end), [(3=>2),])
+
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+        try
+            2
+            throw("a")
+        catch e
+            e
+        end
+    end), [(3=>2), (4=>"a"),  # Because it's caught w/ a variable
+            (6=>"a"),
+           ])
+end

@@ -94,6 +94,20 @@ function thunkwrap(head::Union{Val{:if},Val{:elseif}}, expr::Expr)
     return expr
 end
 
+function thunkwrap(head::Union{Val{:try}}, expr::Expr)
+    # try block
+    expr.args[1] = thunkwrap(expr.args[1])
+    # catch variable
+    catch_variable = expr.args[2]
+    # catch block
+    expr.args[3] = thunkwrap(expr.args[3])
+    if catch_variable != false
+        pushfirst!(expr.args[3].args, thunkwrap(catch_variable))
+    end
+
+    return expr
+end
+
 # Loops
 function thunkwrap(head::Val{:while}, expr::Expr)
     # Thunkwrap all exprs
