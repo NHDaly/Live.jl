@@ -207,7 +207,7 @@ function liveEval(expr, usermodule=@__MODULE__)
 
     Live.reset_testfuncs()
 
-    for toplevel_expr in LiveEval.thunkwrap.(expr.args)
+    for toplevel_expr in thunkwrap.(expr.args)
         try
             Core.eval(usermodule, toplevel_expr)
         catch e
