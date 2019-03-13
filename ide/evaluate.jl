@@ -147,7 +147,10 @@ function record_linenode(linenode::LineNumberNode)
 end
 thunkwrap(linenode::LineNumberNode) =
                 :( $record_linenode(LineNumberNode($(linenode.line), $(string(linenode.file)))) )
-thunkwrap(literal) = :($record_thunk($literal))
+thunkwrap(literal) = @match literal begin
+    Symbol("_") => literal
+    _ => :($record_thunk($literal))
+end
 
 
 
