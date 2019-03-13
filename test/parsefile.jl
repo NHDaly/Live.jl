@@ -4,7 +4,6 @@ using Test
 
 include("../ide/parsefile.jl")
 
-Live.@tested(parseall)
 Test.@testset "..." begin
   expr1 = "x + 1"
   expr2 = "function foo() return 3 end"

@@ -60,7 +60,7 @@ end)
 # A single module
 @eval LiveEval ctx = CollectedOutputs([], [])
 @time for toplevel_expr in LiveEval.thunkwrap.((quote
-        module Test
+        module TestModule
             struct X end
             @show X()
             f() = 5
@@ -74,7 +74,7 @@ LiveEval.ctx.outputs
 # Embedded Modules
 @eval LiveEval ctx = CollectedOutputs([], [])
 @time for toplevel_expr in LiveEval.thunkwrap.((quote
-        module Test
+        module TestModule
             struct X end
             @show X()
             f() = 5
@@ -92,7 +92,7 @@ end
 LiveEval.ctx.outputs
 
 @time for toplevel_expr in LiveEval.thunkwrap(quote
-        module Test
+        module TestModule
         module M
             struct X end
             G = 20
@@ -143,7 +143,7 @@ LiveEval.liveEval(quote module M x = 6 end end)
 # This is needed because the `@test` somehow messes with the line numbers.
 function testLiveEval(curline::Int, outs::Array, expected::Array)
     expected = [(curline + l-1) => o for (l,o) in expected]
-    @test Set(outs) == Set(expected)
+    @test sort(collect(Set(outs)), by=(p)->p[1]) == sort(collect(Set(expected)), by=(p)->p[1])
 end
 
 @testset "simple" begin
@@ -154,8 +154,8 @@ end
              f()
              function f1(x) x+1 end
              f1(5)
-        end), [(2=>"f"), (2=>2), (3=>2),
-               (4=>"f1"), (4=>6), (5=>6)])
+        end), [(2=>2), (3=>2),
+               (4=>"f1"), (4=>6), (5=>6), (4=>"f1(5)")])
 end
 @testset "UserModule" begin
     usermodule = Module(:UserModule)
@@ -179,7 +179,7 @@ end
                 end
             end
             f()
-        end), [(2=>"f"), (3=>0),
+        end), [(2=>"f"), (2=>"f()"), (3=>0),
                    (4=>true), (4=>true), (4=>false),
                        (5=>1), (5=>2),
                (8=>nothing)])
@@ -192,11 +192,12 @@ end
                 end
             end
             f()
-        end), [(2=>"f"),
+        end), [(2=>"f"), (2=>"f()"),
                    (3=>1), (3=>2),
                        (4=>1), (4=>2),
                (7=>nothing)])
 end
+
 
 @testset "where T" begin
     testLiveEval(@__LINE__, LiveEval.liveEval(quote
@@ -252,5 +253,5 @@ end
                  __undefined__
              end
              Live.@test f()
-        end), [(2=>"f")])
+        end), [(2=>"f"), (2=>"f()"), (5=>nothing), (5=>UndefVarError(:__undefined__))])
 end
