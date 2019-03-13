@@ -154,7 +154,7 @@ end
              f()
              function f1(x) x+1 end
              f1(5)
-        end), [(2=>2), (3=>2),
+        end), [(2=>"f"), (2=>2), (3=>2), (2=>"f()"),
                (4=>"f1"), (4=>6), (5=>6), (4=>"f1(5)")])
 end
 @testset "UserModule" begin
@@ -198,6 +198,13 @@ end
                (7=>nothing)])
 end
 
+@testset "simple functions" begin
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+        f() = 2
+        f(x,y) = x+y
+    end), [(2=>"f"),
+           (3=>"f")])
+end
 
 @testset "where T" begin
     testLiveEval(@__LINE__, LiveEval.liveEval(quote
