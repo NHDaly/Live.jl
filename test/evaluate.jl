@@ -281,3 +281,19 @@ end
             (6=>"a"),
            ])
 end
+
+@testset "type assertions" begin
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+        function f(x::Int, y::Float32) x+y end
+        f(x::Int,y::Float32) = x+y
+    end), [(2=>"f"),
+           (3=>"f")])
+
+   testLiveEval(@__LINE__, LiveEval.liveEval(quote
+       function f(x::Int, ::Type{Float32}) y end
+       f(::Val{5}) = 5
+   end), [(2=>"f"),
+          (3=>"f")])
+end
+
+LiveEval.thunkwrap(:(function f(::Type{Float32}) 2 end))
