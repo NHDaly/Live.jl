@@ -71,8 +71,12 @@ function argnames(args::Array)
         @match a begin
             # Note: Order is significant here.
             Expr(:parameters, kwargs) => (kwargs_out = argnames(kwargs))
+            # Don't try to print _ as rhs value
+            Expr(:(::), [:_, _...]) => push!(out, "_")
+            :_ => push!(out, "_")
+            # Represent unnamed but typed variables with _ and their type
+            Expr(:(::), [typename]) => push!(out, string(typename))
             Expr(:(::), [name, _]) => push!(out, name)
-            Expr(:(::), [typename]) => push!(out, "::$typename")
             value => push!(out, value)
         end
     end

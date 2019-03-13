@@ -296,4 +296,13 @@ end
           (3=>"f")])
 end
 
-LiveEval.thunkwrap(:(function f(::Type{Float32}) 2 end))
+@testset "unnamed parameters" begin
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+        function f(_) 1 end
+        f(_::Int) = 2
+        f(nothing)
+        f(10)
+    end), [(2=>"f"), (2=>"f(_)"), (2=>1),
+           (3=>"f"), (3=>"f(_)"), (3=>2),
+           (4=>1), (5=>2),])
+end
