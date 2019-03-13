@@ -7,7 +7,11 @@
     function testcall(fcall, file::$LiveIDEFile, line)
         quote
             function live_test()
-                $(esc(fcall))
+                try
+                    $(esc(fcall))
+                catch e
+                    push!($($LiveEval).ctx.outputs, ($line => e))
+                end
             end
             push!($Live.testthunks, live_test)
             nothing

@@ -6,7 +6,10 @@ module Test
 # Loops
 function f(x)
  	out = 0
-	for x in 1:3
+	for x in 1:4
+        if x == 2
+            continue
+        end
     	z = 2*x
         out += z
 	end

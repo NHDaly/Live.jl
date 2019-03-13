@@ -10,11 +10,13 @@ mutable struct CollectedOutputs
 end
 ctx = CollectedOutputs([], [1])  # Initialize to start with line 1
 
-function record_thunk(f::Function)
+function record_thunk(val)
     global ctx
-    val = f()
-    push!(ctx.outputs, (pop!(ctx.linestack) => val))
-    val
+    #quote
+        #val = $expr
+        push!(ctx.outputs, (pop!(ctx.linestack) => val))
+        val
+    #end
 end
 
 thunkwrap(expr::Expr) = thunkwrap(Val(expr.head), expr)
@@ -26,7 +28,7 @@ function thunkwrap(head::Val{:block}, expr::Expr)
 end
 # Final leaf nodes
 function thunkwrap(head, expr::Expr)
-    return :( $record_thunk(()->$expr) )
+    return :($record_thunk($expr))
 end
 # Special cases
 function thunkwrap(head::Val{:function}, expr::Expr)
@@ -47,7 +49,7 @@ function thunkwrap(head::Val{:function}, expr::Expr)
     startline_var = gensym("$(fname)_startline")
     # Add printing the function call w/ args to the body
     if length(expr.args) >= 2
-        argvals = callsig.args[2:end]
+        argvals = argnames(callsig)
         calc_callval_expr = :($(string(fname))*"($(join([$(argvals...)], ',')))")
         # Print it onto the first line of the function definition, assigned to a global below.
         pushfirst!(expr.args[2].args, :(
@@ -59,6 +61,22 @@ function thunkwrap(head::Val{:function}, expr::Expr)
     return :($startline_var = $ctx.linestack[end];
              $expr; $(thunkwrap(string(fname))) )
 end
+
+argnames(fcall::Expr) = argnames(fcall.args[2:end])
+function argnames(args::Array)
+    out = []
+    kwargs_out = []
+    for a in args
+        @match a begin
+            # Note: Order is significant here.
+            Expr(:parameters, kwargs) => (kwargs_out = argnames(kwargs))
+            Expr(_, [name, _]) => push!(out, name)
+            value => push!(out, value)
+        end
+    end
+    return [out..., kwargs_out...]
+end
+
 function thunkwrap(head::Val{:(=)}, expr::Expr)
     @match expr begin
         # Check for `f(x) = x` style function definition
@@ -119,14 +137,17 @@ function thunkwrap(head::Val{:for}, expr::Expr)
     expr.args[2].args = [pushline, println, expr.args[2].args...]
     return :($preloop; $popline; $expr)
 end
+# Control flow statements that don't create a value, need to manually pop their linenumber.
+thunkwrap(head::Val{:continue}, expr::Expr) = :(pop!($ctx.linestack); $expr)
+thunkwrap(head::Val{:break}, expr::Expr) = :(pop!($ctx.linestack); $expr)
 
 
-function record_thunk(linenode::LineNumberNode)
+function record_linenode(linenode::LineNumberNode)
     push!(ctx.linestack, linenode.line)
 end
 thunkwrap(linenode::LineNumberNode) =
-                :( $record_thunk(LineNumberNode($(linenode.line), $(string(linenode.file)))) )
-thunkwrap(literal) = :( $record_thunk(()->$literal) )
+                :( $record_linenode(LineNumberNode($(linenode.line), $(string(linenode.file)))) )
+thunkwrap(literal) = :($record_thunk($literal))
 
 
 
@@ -147,7 +168,9 @@ end
 # Ignore these toplevel expressions
 thunkwrap(head::Val{:import}, expr::Expr) = expr
 thunkwrap(head::Val{:using}, expr::Expr) = expr
+thunkwrap(head::Val{:export}, expr::Expr) = expr
 thunkwrap(head::Val{:include}, expr::Expr) = expr
+
 struct LiveIDEFile
     filename::String
 end
