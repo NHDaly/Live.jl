@@ -79,14 +79,12 @@ function argnames(args::Array)
 end
 
 function thunkwrap(head::Val{:(=)}, expr::Expr)
-    @match expr begin
+    if Base.is_short_function_def(expr)
         # Check for `f(x) = x` style function definition
-        Expr(:call, _) => return thunkwrap(Val(:function), expr)
-        # otherwise
-        _ => begin
-            expr.args[2] = thunkwrap(expr.args[2])
+        return thunkwrap(Val(:function), expr)
+    else
+        expr.args[2] = thunkwrap(expr.args[2])
             return expr
-        end
     end
 end
 function thunkwrap(head::Union{Val{:if},Val{:elseif}}, expr::Expr)
