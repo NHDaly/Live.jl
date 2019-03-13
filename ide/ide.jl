@@ -38,6 +38,7 @@ function new_window()
     end
     w = Window(async=false)
     title(w, "untitled")
+    global current_filepath = nothing
     #tools(w)
 
     # To allow using JQuery in electron:
@@ -156,10 +157,10 @@ function editorchange(w, globalFilepath, editortext)
             # writes to the app. Perhaps in a different type of output div.
             UserCode = Module(:UserCode)
             @eval UserCode import Base: eval
-            #@eval UserCode include(fname::AbstractString) = Main.Base.include(@__MODULE__, Base.relpath(fname, @__FILE__))
+            #@eval UserCode include(fname::AbstractString) = Main.Base.include(@__MODULE__, Base.relpath(fname, current_filepath))
             @eval UserCode include(fname::AbstractString) = Main.Base.include(@__MODULE__, fname)
             setparent!(UserCode, UserCode)
-            outs = LiveEval.liveEval(parsed, UserCode)
+            outs = LiveEval.liveEval(parsed, UserCode, current_filepath)
             for (l, v) in outs
                 if v === nothing continue end
                 outputlines[l] *= "$v "
@@ -168,7 +169,8 @@ function editorchange(w, globalFilepath, editortext)
             if (e isa CancelException)
                 return
             end
-            Base.display_error(e)
+            Base.display_error(e, Base.catch_backtrace())
+            #rethrow()
         end
 
         # -- Display output in js window after everything is done --
@@ -325,6 +327,11 @@ function set_up_app_menu(w)
     """))
 end
 
+function set_filepath(w, path)
+    title(w, path)
+    global current_filepath = path
+end
+
 function set_up_window_menu(w)
     # --- FILE API ---
     # Set up dialog
@@ -335,7 +342,7 @@ function set_up_window_menu(w)
         end
         contents = read(selectedfiles[1], String)
         @js_ w texteditor.setValue($contents)
-        title(w, selectedfiles[1])
+        set_filepath(w, selectedfiles[1])
     end
 
     save_file(args::Array) = save_file(args...)  # js sends args as an array
@@ -345,7 +352,7 @@ function set_up_window_menu(w)
             return
         end
         write(selectedfile, contents)
-        title(w, selectedfile)
+        set_filepath(w, selectedfile)
     end
 
     # Set handlers to be called from javascript

@@ -3,6 +3,7 @@
 module LiveEval
 
 using Rematch
+import CodeTools  # For withpath (for evaling in the correct file)
 
 mutable struct CollectedOutputs
     outputs
@@ -196,12 +197,11 @@ include("live.jl")
 #
 #end
 
-
 # -------- whole file
 
 include("parsefile.jl")
 
-function liveEval(expr, usermodule=@__MODULE__)
+function liveEval(expr, usermodule=@__MODULE__, file=nothing)
     @assert expr.head == :block
     global ctx = CollectedOutputs([], [1]) # Initialize to start on line 1
 
@@ -209,19 +209,27 @@ function liveEval(expr, usermodule=@__MODULE__)
 
     for toplevel_expr in thunkwrap.(expr.args)
         try
-            Core.eval(usermodule, toplevel_expr)
+            CodeTools.withpath(file) do
+                Core.eval(usermodule, toplevel_expr)
+            end
         catch e
-            push!(ctx.outputs, (pop!(ctx.linestack) => e))
-            #Base.display_error(e)
+            if length(ctx.linestack) > 0
+                push!(ctx.outputs, (pop!(ctx.linestack) => e))
+            else
+                # For erorrs that happen before we've executed any code.
+                Base.display_error(e, Base.catch_backtrace())
+            end
         end
     end
-    run_all_livetests(usermodule)
+    run_all_livetests(usermodule, file)
     return ctx.outputs
 end
 
-function run_all_livetests(usermodule)
+function run_all_livetests(usermodule, file)
     for testthunk in Live.testthunks
-        @eval usermodule $testthunk()
+        CodeTools.withpath(file) do
+            @eval usermodule $testthunk()
+        end
     end
 end
 # -----------
