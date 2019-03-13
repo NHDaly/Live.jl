@@ -117,13 +117,21 @@ function new_window()
         (cm) -> (Blink.msg("editorchange", [cm.getValue(), globalFilepath]);
                  console.log("sent msg to julia!");))
 
+    inflight = nothing
     Blink.handle(w, "editorchange") do (txt, filepath)
-        editorchange(w, filepath, txt)
+        if inflight !== nothing
+            # Cancel current callback
+            try schedule(inflight, CancelException(), error=true) catch end
+        end
+        inflight = @async editorchange(w, filepath, txt)
     end
     #Blink.handlers(w)["editorchange"] = (args...)->editorchange(w, args...)
     # Do an initial run.
     @js w Blink.msg("editorchange", [texteditor.getValue(), globalFilepath]);
 end
+
+# Signals to cancel current inflight callback.
+struct CancelException end
 
 # User code parsing + eval
 numlines(str) = 1+count(c->c=='\n', str)
@@ -157,6 +165,9 @@ function editorchange(w, globalFilepath, editortext)
                 outputlines[l] *= "$v "
             end
         catch e
+            if (e isa CancelException)
+                return
+            end
             Base.display_error(e)
         end
 
