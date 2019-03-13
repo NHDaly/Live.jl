@@ -307,13 +307,17 @@ end
            (4=>1), (5=>2),])
 end
 @testset "@eval block" begin
+    M = Module(:M)
     testLiveEval(@__LINE__, LiveEval.liveEval(quote
         Base.@eval 5
         @eval begin
             2
             3
         end
+        # Eval into a module
+        @eval $M begin 5 end
     end), [(2=>5),
            (3=>3),
-           (4=>2), (5=>3),])
+           (4=>2), (5=>3),
+           (7=>5)])
 end

@@ -214,8 +214,8 @@ end
 
 function thunkwrap(::Val{:eval}, expr::Expr)  # macrocall
     # Wrap any inner blocks in a call to @eval
-    if expr.args[3] isa Expr
-        expr.args[3] = thunkwrap(expr.args[3])
+    if expr.args[end] isa Expr
+        expr.args[end] = thunkwrap(expr.args[end])
     end
     return expr
 end
