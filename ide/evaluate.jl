@@ -71,7 +71,12 @@ function argnames(args::Array)
         @match a begin
             # Note: Order is significant here.
             Expr(:parameters, kwargs) => (kwargs_out = argnames(kwargs))
-            Expr(_, [name, _]) => push!(out, name)
+            # Don't try to print _ as rhs value
+            Expr(:(::), [:_, _...]) => push!(out, "_")
+            :_ => push!(out, "_")
+            # Represent unnamed but typed variables with _ and their type
+            Expr(:(::), [typename]) => push!(out, string(typename))
+            Expr(:(::), [name, _]) => push!(out, name)
             value => push!(out, value)
         end
     end
@@ -79,20 +84,32 @@ function argnames(args::Array)
 end
 
 function thunkwrap(head::Val{:(=)}, expr::Expr)
-    @match expr begin
+    if Base.is_short_function_def(expr)
         # Check for `f(x) = x` style function definition
-        Expr(:call, _) => return thunkwrap(Val(:function), expr)
-        # otherwise
-        _ => begin
-            expr.args[2] = thunkwrap(expr.args[2])
+        return thunkwrap(Val(:function), expr)
+    else
+        expr.args[2] = thunkwrap(expr.args[2])
             return expr
-        end
     end
 end
 function thunkwrap(head::Union{Val{:if},Val{:elseif}}, expr::Expr)
     for (i,node) in enumerate(expr.args)
         expr.args[i] = thunkwrap(node)
     end
+    return expr
+end
+
+function thunkwrap(head::Union{Val{:try}}, expr::Expr)
+    # try block
+    expr.args[1] = thunkwrap(expr.args[1])
+    # catch variable
+    catch_variable = expr.args[2]
+    # catch block
+    expr.args[3] = thunkwrap(expr.args[3])
+    if catch_variable != false
+        pushfirst!(expr.args[3].args, thunkwrap(catch_variable))
+    end
+
     return expr
 end
 

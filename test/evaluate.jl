@@ -154,7 +154,7 @@ end
              f()
              function f1(x) x+1 end
              f1(5)
-        end), [(2=>2), (3=>2),
+        end), [(2=>"f"), (2=>2), (3=>2), (2=>"f()"),
                (4=>"f1"), (4=>6), (5=>6), (4=>"f1(5)")])
 end
 @testset "UserModule" begin
@@ -198,6 +198,13 @@ end
                (7=>nothing)])
 end
 
+@testset "simple functions" begin
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+        f() = 2
+        f(x,y) = x+y
+    end), [(2=>"f"),
+           (3=>"f")])
+end
 
 @testset "where T" begin
     testLiveEval(@__LINE__, LiveEval.liveEval(quote
@@ -254,4 +261,48 @@ end
              end
              Live.@test f()
         end), [(2=>"f"), (2=>"f()"), (5=>nothing), (5=>UndefVarError(:__undefined__))])
+end
+
+@testset "try/catch" begin
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+        try
+            2
+        catch end
+    end), [(3=>2),])
+
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+        try
+            2
+            throw("a")
+        catch e
+            e
+        end
+    end), [(3=>2), (4=>"a"),  # Because it's caught w/ a variable
+            (6=>"a"),
+           ])
+end
+
+@testset "type assertions" begin
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+        function f(x::Int, y::Float32) x+y end
+        f(x::Int,y::Float32) = x+y
+    end), [(2=>"f"),
+           (3=>"f")])
+
+   testLiveEval(@__LINE__, LiveEval.liveEval(quote
+       function f(x::Int, ::Type{Float32}) y end
+       f(::Val{5}) = 5
+   end), [(2=>"f"),
+          (3=>"f")])
+end
+
+@testset "unnamed parameters" begin
+    testLiveEval(@__LINE__, LiveEval.liveEval(quote
+        function f(_) 1 end
+        f(_::Int) = 2
+        f(nothing)
+        f(10)
+    end), [(2=>"f"), (2=>"f(_)"), (2=>1),
+           (3=>"f"), (3=>"f(_)"), (3=>2),
+           (4=>1), (5=>2),])
 end
