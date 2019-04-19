@@ -6,16 +6,16 @@ using Rematch
 import CodeTools  # For withpath (for evaling in the correct file)
 
 mutable struct CollectedOutputs
-    outputs
+    outputs::Vector{Pair}
     linestack::Vector{Int}
 end
-ctx = CollectedOutputs([], [1])  # Initialize to start with line 1
+const ctx = fill(CollectedOutputs(Pair[], [1]))  # Initialize to start with line 1
 
 function record_thunk(val)
     global ctx
     #quote
         #val = $expr
-        push!(ctx.outputs, (pop!(ctx.linestack) => val))
+        push!(ctx[].outputs, (pop!(ctx[].linestack) => val))
         val
     #end
 end
@@ -54,12 +54,12 @@ function thunkwrap(head::Val{:function}, expr::Expr)
         calc_callval_expr = :($(string(fname))*"($(join([$(argvals...)], ',')))")
         # Print it onto the first line of the function definition, assigned to a global below.
         pushfirst!(expr.args[2].args, :(
-            push!($ctx.outputs, ($startline_var => $calc_callval_expr));
+            push!($ctx[].outputs, ($startline_var => $calc_callval_expr));
         ))
     end
 
     # Record the function definition starting line to later print the function call
-    return :($startline_var = $ctx.linestack[end];
+    return :($startline_var = $ctx[].linestack[end];
              $expr; $(thunkwrap(string(fname))) )
 end
 
@@ -122,8 +122,8 @@ function thunkwrap(head::Val{:while}, expr::Expr)
 
     # Push the last line on again, so it lasts throughout the loop
     startline_var = gensym(:startline)
-    preloop = :($startline_var = $LiveEval.ctx.linestack[end])
-    pushline = :(push!($LiveEval.ctx.linestack, $startline_var))
+    preloop = :($startline_var = $LiveEval.ctx[].linestack[end])
+    pushline = :(push!($LiveEval.ctx[].linestack, $startline_var))
     #expr.args[1] = :( $pushline; $(expr.args[1]) )
 
     #loop_outputs = CollectedOutputs[]
@@ -146,22 +146,22 @@ function thunkwrap(head::Val{:for}, expr::Expr)
 
     # Push the last line on again, so it lasts throughout the loop
     startline_var = gensym(:startline)
-    preloop = :($startline_var = $LiveEval.ctx.linestack[end])
+    preloop = :($startline_var = $LiveEval.ctx[].linestack[end])
     # This is harder cause the for loop runs exactly the right amount of times, so i only
     # want to push n-1 times
-    pushline = :(push!($LiveEval.ctx.linestack, $startline_var))
-    popline = :(pop!($LiveEval.ctx.linestack))
+    pushline = :(push!($LiveEval.ctx[].linestack, $startline_var))
+    popline = :(pop!($LiveEval.ctx[].linestack))
 
     expr.args[2].args = [pushline, println, expr.args[2].args...]
     return :($preloop; $popline; $expr)
 end
 # Control flow statements that don't create a value, need to manually pop their linenumber.
-thunkwrap(head::Val{:continue}, expr::Expr) = :(pop!($ctx.linestack); $expr)
-thunkwrap(head::Val{:break}, expr::Expr) = :(pop!($ctx.linestack); $expr)
+thunkwrap(head::Val{:continue}, expr::Expr) = :(pop!($ctx[].linestack); $expr)
+thunkwrap(head::Val{:break}, expr::Expr) = :(pop!($ctx[].linestack); $expr)
 
 
 function record_linenode(linenode::LineNumberNode)
-    push!(ctx.linestack, linenode.line)
+    push!(ctx[].linestack, linenode.line)
 end
 thunkwrap(linenode::LineNumberNode) =
                 :( $record_linenode(LineNumberNode($(linenode.line), $(string(linenode.file)))) )
@@ -235,9 +235,10 @@ include("live.jl")
 
 include("parsefile.jl")
 
-function liveEval(expr, usermodule=@__MODULE__, file=nothing)
+function liveEval(expr, usermodule=@__MODULE__, file=nothing)::fieldtype(CollectedOutputs,:outputs)
     @assert expr.head == :block
-    global ctx = CollectedOutputs([], [1]) # Initialize to start on line 1
+    global ctx
+    ctx[] = CollectedOutputs(Pair[], [1]) # Initialize to start on line 1
 
     Live.reset_testfuncs()
 
@@ -247,8 +248,8 @@ function liveEval(expr, usermodule=@__MODULE__, file=nothing)
                 Core.eval(usermodule, toplevel_expr)
             end
         catch e
-            if length(ctx.linestack) > 0
-                push!(ctx.outputs, (pop!(ctx.linestack) => e))
+            if length(ctx[].linestack) > 0
+                push!(ctx[].outputs, (pop!(ctx[].linestack) => e))
             else
                 # For erorrs that happen before we've executed any code.
                 Base.display_error(e, Base.catch_backtrace())
@@ -256,7 +257,7 @@ function liveEval(expr, usermodule=@__MODULE__, file=nothing)
         end
     end
     run_all_livetests(usermodule, file)
-    return ctx.outputs
+    return ctx[].outputs
 end
 
 function run_all_livetests(usermodule, file)

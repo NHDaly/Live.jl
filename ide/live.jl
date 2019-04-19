@@ -10,7 +10,7 @@
                 try
                     $(esc(fcall))
                 catch e
-                    push!($($LiveEval).ctx.outputs, ($line => e))
+                    push!($($LiveEval).ctx[].outputs, ($line => e))
                 end
             end
             push!($Live.testthunks, live_test)
@@ -29,7 +29,7 @@
                     catch le
                         if le isa LoadError
                             e = le.error
-                            push!($($LiveEval).ctx.outputs, ($line => e))
+                            push!($($LiveEval).ctx[].outputs, ($line => e))
                         end
                     end
                  end)

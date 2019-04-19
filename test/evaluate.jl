@@ -40,7 +40,7 @@ end)
     end
     foo(3)
 end))
-LiveEval.ctx.outputs
+LiveEval.ctx[].outputs
 
 
 LiveEval.thunkwrap(quote
@@ -58,7 +58,7 @@ end)
 
 # --------- Toplevel tests ----------
 # A single module
-@eval LiveEval ctx = CollectedOutputs([], [])
+@eval LiveEval ctx[] = CollectedOutputs([], [])
 @time for toplevel_expr in LiveEval.thunkwrap.((quote
         module TestModule
             struct X end
@@ -69,10 +69,10 @@ end)
     end).args)
     eval(toplevel_expr)
 end
-LiveEval.ctx.outputs
+LiveEval.ctx[].outputs
 
 # Embedded Modules
-@eval LiveEval ctx = CollectedOutputs([], [])
+@eval LiveEval ctx[] = CollectedOutputs([], [])
 @time for toplevel_expr in LiveEval.thunkwrap.((quote
         module TestModule
             struct X end
@@ -89,7 +89,7 @@ LiveEval.ctx.outputs
     end).args)
     eval(toplevel_expr)
 end
-LiveEval.ctx.outputs
+LiveEval.ctx[].outputs
 
 @time for toplevel_expr in LiveEval.thunkwrap(quote
         module TestModule
@@ -129,7 +129,7 @@ LiveEval.ctx.outputs
     end).args
     eval(toplevel_expr)
 end
-@show LiveEval.ctx.outputs
+@show LiveEval.ctx[].outputs
 foo
 
 dump(quote f() = 5 end)
@@ -319,5 +319,18 @@ end
     end), [(2=>5),
            (3=>3),
            (4=>2), (5=>3),
-           (7=>5)])
+           (8=>5)])
+end
+
+@testset "type stable!" begin
+    @test_broken false
+    # @inferred is broken; test fails due to https://github.com/JuliaLang/julia/issues/31334
+    #@inferred(LiveEval.liveEval(quote
+    #    2
+    #    3
+    #end))
+    #testLiveEval(@__LINE__, @inferred(LiveEval.liveEval(quote
+    #    2
+    #end)), [(2=>2),
+    #      ])
 end
