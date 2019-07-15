@@ -409,26 +409,26 @@ end
 
 LiveIDE.new_window()
 
-using Profile
-sleep(3)
-Profile.init()
-
-@profile for _ in 1:10; sleep(1); end
-
-using StatProfilerHTML
-statprofilehtml()
-
-macro m(f)
-    args = ([esc(a) for a in f.args[2:end]]...,)
-    quote
-         $(f.args[1])($(args...))
-    end
-end
-macro m(ex)
-    quote
-        args = ($([esc(ex.args[i]) for i = 2:length(ex.args)]...),)
-         $(ex.args[1])(args...)
-    end
-end
-
-println(@macroexpand @m p(quote 5+5 end))
+#using Profile
+#sleep(3)
+#Profile.init()
+#
+#@profile for _ in 1:10; sleep(1); end
+#
+#using StatProfilerHTML
+#statprofilehtml()
+#
+#macro m(f)
+#    args = ([esc(a) for a in f.args[2:end]]...,)
+#    quote
+#         $(f.args[1])($(args...))
+#    end
+#end
+#macro m(ex)
+#    quote
+#        args = ($([esc(ex.args[i]) for i = 2:length(ex.args)]...),)
+#         $(ex.args[1])(args...)
+#    end
+#end
+#
+#println(@macroexpand @m p(quote 5+5 end))
