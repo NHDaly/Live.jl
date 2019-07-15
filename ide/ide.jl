@@ -163,7 +163,8 @@ function editorchange(w, globalFilepath, editortext)
             outs = LiveEval.liveEval(parsed, UserCode, current_filepath)
             for (l, v) in outs
                 if v === nothing continue end
-                #outputlines[l] *= "$v "
+                # TODO: more sophisticated output handling (structured outputs)
+                outputlines[l] *= "$(repr(v)) "
             end
         catch e
             if (e isa CancelException)
